@@ -1,0 +1,19 @@
+# 시크릿 — 절대 커밋하지 않음
+.env
+.env.local
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# 에디터
+.claude/
+.vscode/
+
+# 로그
+*.log
