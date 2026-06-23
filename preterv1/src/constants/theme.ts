@@ -72,4 +72,8 @@ export const Brand = {
   textSecondary: '#6B7280',
   textDisabled: '#9CA3AF',
   border: '#C0C0C0',
+  borderDisabled: '#EFEFEF',
+  divider: '#DFDFDF',
+  error: '#FF334B',
+  requiredDot: '#FF334B',
 } as const;

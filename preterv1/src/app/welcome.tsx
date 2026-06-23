@@ -1,9 +1,12 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Brand, Spacing } from '@/constants/theme';
+import { AuthApiError, signInWithOAuth } from '@/lib/auth';
+import { setSnsDraft } from '@/lib/sns-draft';
 
 function showComingSoon(provider: string) {
   Alert.alert('준비 중', `${provider} 로그인은 아직 지원되지 않습니다.`);
@@ -30,6 +33,35 @@ function ContinueButton({
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const [snsLoading, setSnsLoading] = useState<'google' | 'apple' | null>(null);
+
+  async function handleSnsLogin(provider: 'google' | 'apple') {
+    if (snsLoading) return;
+    setSnsLoading(provider);
+    try {
+      const result = await signInWithOAuth(provider);
+      if (result.user.is_onboarded) {
+        router.replace('/main');
+      } else {
+        setSnsDraft({
+          name: result.user.name ?? '',
+          email: result.user.email ?? '',
+        });
+        router.push('/sns-signup-card-intro');
+      }
+    } catch (err) {
+      if (err instanceof AuthApiError && err.code === 'SNS_CANCELLED') {
+        return;
+      }
+      if (err instanceof AuthApiError && err.code === 'NETWORK_ERROR') {
+        Alert.alert('네트워크 연결을 확인해주세요');
+      } else {
+        Alert.alert('로그인에 실패했어요. 잠시 후 다시 시도해주세요.');
+      }
+    } finally {
+      setSnsLoading(null);
+    }
+  }
 
   return (
     <View style={styles.container}>
@@ -52,22 +84,30 @@ export default function WelcomeScreen() {
           <ContinueButton
             label="Google로 계속"
             icon={
-              <View style={styles.googleIcon}>
-                <Text style={styles.googleIconLabel}>G</Text>
-              </View>
+              snsLoading === 'google' ? (
+                <ActivityIndicator color={Brand.textPrimary} />
+              ) : (
+                <View style={styles.googleIcon}>
+                  <Text style={styles.googleIconLabel}>G</Text>
+                </View>
+              )
             }
-            onPress={() => showComingSoon('Google')}
+            onPress={() => handleSnsLogin('google')}
           />
           <ContinueButton
             label="Apple로 계속"
             icon={
-              <Image
-                source={require('@/assets/images/brand/apple-icon.png')}
-                style={styles.appleIcon}
-                contentFit="contain"
-              />
+              snsLoading === 'apple' ? (
+                <ActivityIndicator color={Brand.textPrimary} />
+              ) : (
+                <Image
+                  source={require('@/assets/images/brand/apple-icon.png')}
+                  style={styles.appleIcon}
+                  contentFit="contain"
+                />
+              )
             }
-            onPress={() => showComingSoon('Apple')}
+            onPress={() => handleSnsLogin('apple')}
           />
           <ContinueButton
             label="게스트로 미팅 참여"

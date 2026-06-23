@@ -1,0 +1,117 @@
+"""sqladmin이 들여다볼 SQLAlchemy 모델.
+
+supabase/migrations/*.sql에 정의된 테이블을 그대로 매핑한다. 마이그레이션으로
+컬럼을 추가/변경하면 여기도 같이 갱신해야 한다 (자동 동기화 아님 — Django의
+makemigrations처럼 모델이 먼저가 아니라, SQL 마이그레이션이 먼저고 모델이 뒤따라간다).
+
+auth.users(Supabase Auth 내부 테이블)는 GoTrue가 전적으로 관리하므로 여기서
+매핑하지 않는다. 운영자가 유저를 봐야 할 땐 public.users를 사용한다.
+"""
+
+import uuid
+from datetime import date, datetime
+
+from sqlalchemy import ForeignKey, Numeric
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    email: Mapped[str]
+    name: Mapped[str]
+    phone: Mapped[str | None]
+    country_code: Mapped[str]
+    company_email: Mapped[str | None]
+    position: Mapped[str | None]
+    company_name: Mapped[str | None]
+    primary_language: Mapped[str]
+    avatar_url: Mapped[str | None]
+    signup_method: Mapped[str]
+    is_onboarded: Mapped[bool]
+    is_admin: Mapped[bool]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+
+    plan: Mapped["UserPlan"] = relationship(back_populates="user", uselist=False)
+    oauth_providers: Mapped[list["OAuthProvider"]] = relationship(back_populates="user")
+
+    def __str__(self) -> str:
+        return f"{self.name} <{self.email}>"
+
+
+class UserPlan(Base):
+    __tablename__ = "user_plans"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.users.id")
+    )
+    plan: Mapped[str]
+    status: Mapped[str]
+    minutes_total: Mapped[int]
+    minutes_used: Mapped[int]
+    overage_rate: Mapped[float] = mapped_column(Numeric(5, 2))
+    period_start: Mapped[date]
+    period_end: Mapped[date]
+    stripe_sub_id: Mapped[str | None]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+
+    user: Mapped["User"] = relationship(back_populates="plan")
+
+    def __str__(self) -> str:
+        return f"{self.plan} ({self.status})"
+
+
+class BusinessCard(Base):
+    __tablename__ = "business_cards"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    session_token: Mapped[str]
+    raw_text: Mapped[str | None]
+    name: Mapped[str | None]
+    company_email: Mapped[str | None]
+    phone: Mapped[str | None]
+    company_name: Mapped[str | None]
+    position: Mapped[str | None]
+    image_url: Mapped[str | None]
+    ocr_provider: Mapped[str]
+    confidence: Mapped[float | None] = mapped_column(Numeric(4, 3))
+    expires_at: Mapped[datetime]
+    created_at: Mapped[datetime]
+
+    def __str__(self) -> str:
+        return self.name or self.session_token
+
+
+class OAuthProvider(Base):
+    __tablename__ = "oauth_providers"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.users.id")
+    )
+    provider: Mapped[str]
+    provider_uid: Mapped[str]
+    email: Mapped[str | None]
+    access_token: Mapped[str | None]
+    refresh_token: Mapped[str | None]
+    token_expires: Mapped[datetime | None]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+
+    user: Mapped["User"] = relationship(back_populates="oauth_providers")
+
+    def __str__(self) -> str:
+        return f"{self.provider}:{self.provider_uid}"
