@@ -32,6 +32,62 @@ class UpcomingMeetingsResponse(BaseModel):
     total: int
 
 
+class RecentMeetingResponse(BaseModel):
+    id: str
+    title: str | None
+    started_at: str | None
+    duration_min: int | None
+    project_id: str | None
+    project_name: str | None
+
+
+class RecentMeetingsResponse(BaseModel):
+    meetings: list[RecentMeetingResponse]
+
+
+@router.get("/recent", response_model=RecentMeetingsResponse)
+async def list_recent_meetings(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+):
+    """LeftSide PRD 8.1 — 미팅 탭 최근 미팅 목록 (started_at DESC)."""
+    user_id = _require_user_id(credentials)
+    client = get_client()
+
+    rows = (
+        client.table("meeting_rooms")
+        .select("id, title, started_at, ended_at, project_id, projects(name)")
+        .eq("host_user_id", user_id)
+        .not_.is_("started_at", "null")
+        .is_("deleted_at", "null")
+        .order("started_at", desc=True)
+        .execute()
+    )
+
+    meetings = []
+    for row in rows.data:
+        duration_min = None
+        if row["started_at"] and row["ended_at"]:
+            from datetime import datetime
+
+            started = datetime.fromisoformat(row["started_at"])
+            ended = datetime.fromisoformat(row["ended_at"])
+            duration_min = max(0, int((ended - started).total_seconds() // 60))
+
+        project = row.get("projects")
+        meetings.append(
+            RecentMeetingResponse(
+                id=row["id"],
+                title=row["title"],
+                started_at=row["started_at"],
+                duration_min=duration_min,
+                project_id=row["project_id"],
+                project_name=project["name"] if project else None,
+            )
+        )
+
+    return RecentMeetingsResponse(meetings=meetings)
+
+
 @router.get("/upcoming", response_model=UpcomingMeetingsResponse)
 async def list_upcoming_meetings(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),

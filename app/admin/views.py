@@ -9,11 +9,15 @@ from sqladmin import ModelView
 
 from app.admin.models import (
     BusinessCard,
+    Document,
     GuestSession,
     MeetingParticipant,
     MeetingRoom,
     MeetingSummary,
     OAuthProvider,
+    Project,
+    ProjectDocument,
+    ProjectInstruction,
     Report,
     User,
     UserPlan,
@@ -99,6 +103,74 @@ class OAuthProviderAdmin(ModelView, model=OAuthProvider):
     can_create = False
 
 
+class ProjectAdmin(ModelView, model=Project):
+    name = "프로젝트"
+    name_plural = "프로젝트"
+    icon = "fa-solid fa-folder"
+    category = "미팅/자료"
+
+    column_list = [
+        Project.name,
+        Project.description,
+        Project.user,
+        Project.created_at,
+        Project.deleted_at,
+    ]
+    column_searchable_list = [Project.name]
+    column_sortable_list = [Project.created_at]
+    column_default_sort = [(Project.created_at, True)]
+    can_create = False
+
+
+class DocumentAdmin(ModelView, model=Document):
+    name = "미팅 자료"
+    name_plural = "미팅 자료"
+    icon = "fa-solid fa-file"
+    category = "미팅/자료"
+
+    column_list = [
+        Document.title,
+        Document.user,
+        Document.file_url,
+        Document.created_at,
+        Document.deleted_at,
+    ]
+    column_searchable_list = [Document.title]
+    column_sortable_list = [Document.created_at]
+    column_default_sort = [(Document.created_at, True)]
+    can_create = False
+
+
+class ProjectDocumentAdmin(ModelView, model=ProjectDocument):
+    name = "프로젝트 자료 연결"
+    name_plural = "프로젝트 자료 연결"
+    icon = "fa-solid fa-link"
+    category = "미팅/자료"
+
+    column_list = [
+        ProjectDocument.project,
+        ProjectDocument.document,
+        ProjectDocument.applied_at,
+    ]
+    column_sortable_list = [ProjectDocument.applied_at]
+    can_create = False
+
+
+class ProjectInstructionAdmin(ModelView, model=ProjectInstruction):
+    name = "프로젝트 지시사항"
+    name_plural = "프로젝트 지시사항"
+    icon = "fa-solid fa-note-sticky"
+    category = "미팅/자료"
+
+    column_list = [
+        ProjectInstruction.project,
+        ProjectInstruction.content,
+        ProjectInstruction.updated_at,
+    ]
+    column_sortable_list = [ProjectInstruction.updated_at]
+    can_create = False
+
+
 class MeetingRoomAdmin(ModelView, model=MeetingRoom):
     name = "미팅룸"
     name_plural = "미팅룸"
@@ -109,6 +181,7 @@ class MeetingRoomAdmin(ModelView, model=MeetingRoom):
         MeetingRoom.room_code,
         MeetingRoom.title,
         MeetingRoom.host,
+        MeetingRoom.project,
         MeetingRoom.status,
         MeetingRoom.max_participants,
         MeetingRoom.scheduled_at,

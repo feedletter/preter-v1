@@ -117,6 +117,73 @@ class OAuthProvider(Base):
         return f"{self.provider}:{self.provider_uid}"
 
 
+class Project(Base):
+    __tablename__ = "projects"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.users.id"))
+    name: Mapped[str]
+    description: Mapped[str | None]
+    created_at: Mapped[datetime]
+    deleted_at: Mapped[datetime | None]
+
+    user: Mapped["User"] = relationship()
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Document(Base):
+    __tablename__ = "documents"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.users.id"))
+    title: Mapped[str]
+    file_url: Mapped[str]
+    created_at: Mapped[datetime]
+    deleted_at: Mapped[datetime | None]
+
+    user: Mapped["User"] = relationship()
+
+    def __str__(self) -> str:
+        return self.title
+
+
+class ProjectDocument(Base):
+    __tablename__ = "project_documents"
+    __table_args__ = {"schema": "public"}
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.projects.id"), primary_key=True
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.documents.id"))
+    applied_at: Mapped[datetime]
+
+    project: Mapped["Project"] = relationship()
+    document: Mapped["Document"] = relationship()
+
+    def __str__(self) -> str:
+        return f"{self.project_id} → {self.document_id}"
+
+
+class ProjectInstruction(Base):
+    __tablename__ = "project_instructions"
+    __table_args__ = {"schema": "public"}
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.projects.id"), primary_key=True
+    )
+    content: Mapped[str]
+    updated_at: Mapped[datetime]
+
+    project: Mapped["Project"] = relationship()
+
+    def __str__(self) -> str:
+        return f"지시사항:{self.project_id}"
+
+
 class MeetingRoom(Base):
     __tablename__ = "meeting_rooms"
     __table_args__ = {"schema": "public"}
@@ -133,11 +200,15 @@ class MeetingRoom(Base):
     started_at: Mapped[datetime | None]
     ended_at: Mapped[datetime | None]
     expires_at: Mapped[datetime]
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.projects.id")
+    )
     created_at: Mapped[datetime]
     deleted_at: Mapped[datetime | None]
 
     host: Mapped["User"] = relationship()
     participants: Mapped[list["MeetingParticipant"]] = relationship(back_populates="room")
+    project: Mapped["Project | None"] = relationship()
 
     def __str__(self) -> str:
         return f"{self.room_code} ({self.status})"

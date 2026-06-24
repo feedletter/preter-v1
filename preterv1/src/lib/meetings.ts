@@ -43,3 +43,32 @@ export async function fetchUpcomingMeetings(): Promise<Meeting[]> {
   const payload: { meetings: Meeting[]; total: number } = await response.json();
   return payload.meetings;
 }
+
+export type RecentMeeting = {
+  id: string;
+  title: string | null;
+  started_at: string | null;
+  duration_min: number | null;
+  project_id: string | null;
+  project_name: string | null;
+};
+
+export async function fetchRecentMeetings(): Promise<RecentMeeting[]> {
+  const accessToken = await SecureStore.getItemAsync('access_token');
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}/api/v1/meetings/recent`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch {
+    throw new MeetingsApiError('NETWORK_ERROR');
+  }
+
+  if (!response.ok) {
+    const code = response.status === 401 ? 'UNAUTHORIZED' : 'SERVER_ERROR';
+    throw new MeetingsApiError(code);
+  }
+
+  const payload: { meetings: RecentMeeting[] } = await response.json();
+  return payload.meetings;
+}

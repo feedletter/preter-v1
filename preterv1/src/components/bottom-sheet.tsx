@@ -3,7 +3,9 @@ import {
   Animated,
   Dimensions,
   Easing,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   StyleProp,
   StyleSheet,
@@ -84,14 +86,18 @@ export function BottomSheet({ visible, onClose, children, sheetStyle }: BottomSh
         <Animated.View
           style={[styles.sheetWrap, { transform: [{ translateY }] }]}
           pointerEvents="box-none">
-          <Pressable
-            style={[styles.sheet, { paddingBottom: insets.bottom + 16 }, sheetStyle]}
-            onPress={(e) => e.stopPropagation()}>
-            <View style={styles.handleRow}>
-              <View style={styles.handle} />
-            </View>
-            {children}
-          </Pressable>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.keyboardAvoider}>
+            <Pressable
+              style={[styles.sheet, { paddingBottom: insets.bottom + 16 }, sheetStyle]}
+              onPress={(e) => e.stopPropagation()}>
+              <View style={styles.handleRow}>
+                <View style={styles.handle} />
+              </View>
+              {children}
+            </Pressable>
+          </KeyboardAvoidingView>
         </Animated.View>
       </View>
     </Modal>
@@ -106,6 +112,12 @@ const styles = StyleSheet.create({
   sheetWrap: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'flex-end',
+  },
+  // KeyboardAvoidingView가 padding을 붙일 대상 — 키보드가 올라오면 이 만큼
+  // 아래쪽 여백이 생겨서 sheetWrap의 justifyContent:'flex-end'가 시트 전체를
+  // 키보드 위로 밀어 올린다.
+  keyboardAvoider: {
+    width: '100%',
   },
   sheet: {
     backgroundColor: 'white',

@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { LeftSidePanel } from '@/components/left-side-panel';
 import { ProfileSheet } from '@/components/profile-sheet';
 import { Brand, Spacing } from '@/constants/theme';
 import { getMe } from '@/lib/auth';
@@ -131,6 +132,7 @@ export default function MainScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [profileVisible, setProfileVisible] = useState(false);
+  const [leftPanelVisible, setLeftPanelVisible] = useState(false);
   // 구독/정보 페이지로 나갔다가 돌아왔을 때 Profile Sheet를 다시 열어주기 위한 플래그.
   const pendingReopenProfile = useRef(false);
 
@@ -175,7 +177,7 @@ export default function MainScreen() {
       <View style={styles.topNav}>
         <Pressable
           hitSlop={8}
-          onPress={() => Alert.alert('사이드 메뉴는 준비 중이에요')}
+          onPress={() => setLeftPanelVisible(true)}
           accessibilityLabel="메뉴 열기"
           accessibilityHint="사이드 패널을 표시합니다">
           <Text style={styles.menuIcon}>☰</Text>
@@ -188,6 +190,8 @@ export default function MainScreen() {
           <Text style={styles.profileInitial}>{(userName ?? '?').trim().charAt(0)}</Text>
         </Pressable>
       </View>
+
+      <LeftSidePanel visible={leftPanelVisible} onClose={() => setLeftPanelVisible(false)} />
 
       <ProfileSheet
         visible={profileVisible}

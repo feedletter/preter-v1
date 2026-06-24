@@ -19,6 +19,7 @@ export default function RootLayout() {
         <Stack.Screen name="subscription" />
         <Stack.Screen name="profile-info" />
         <Stack.Screen name="main" />
+        <Stack.Screen name="project-detail" />
       </Stack>
     </>
   );

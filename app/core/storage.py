@@ -14,6 +14,7 @@ from google.cloud import storage
 from app.config import settings
 
 AVATAR_MAX_BYTES = 5 * 1024 * 1024  # PRD 9.4: 5MB 초과 시 업로드 거부
+DOCUMENT_MAX_BYTES = 20 * 1024 * 1024
 
 
 class StorageError(Exception):
@@ -41,6 +42,22 @@ def upload_avatar(user_id: str, content: bytes, content_type: str) -> str:
 
     # PRD 9.4: 캐시 무효화를 위해 ?v={timestamp} 쿼리를 붙인다.
     return f"{blob.public_url}?v={timestamp}"
+
+
+def upload_document(user_id: str, filename: str, content: bytes, content_type: str) -> str:
+    if len(content) > DOCUMENT_MAX_BYTES:
+        raise StorageError("FILE_TOO_LARGE")
+
+    timestamp = int(datetime.now(timezone.utc).timestamp())
+    safe_name = filename.replace("/", "_")
+    blob_path = f"documents/{user_id}/{timestamp}_{safe_name}"
+
+    bucket = _get_bucket()
+    blob = bucket.blob(blob_path)
+    blob.upload_from_string(content, content_type=content_type)
+    blob.make_public()
+
+    return blob.public_url
 
 
 def delete_avatar(avatar_url: str) -> None:
