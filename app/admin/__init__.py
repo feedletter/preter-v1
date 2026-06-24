@@ -11,7 +11,17 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.admin.auth import AdminAuth
 from app.admin.db import get_admin_engine
-from app.admin.views import BusinessCardAdmin, OAuthProviderAdmin, UserAdmin, UserPlanAdmin
+from app.admin.views import (
+    BusinessCardAdmin,
+    GuestSessionAdmin,
+    MeetingParticipantAdmin,
+    MeetingRoomAdmin,
+    MeetingSummaryAdmin,
+    OAuthProviderAdmin,
+    ReportAdmin,
+    UserAdmin,
+    UserPlanAdmin,
+)
 from app.config import settings
 
 
@@ -29,5 +39,10 @@ def setup_admin(app: FastAPI) -> Admin:
     admin.add_view(UserPlanAdmin)
     admin.add_view(BusinessCardAdmin)
     admin.add_view(OAuthProviderAdmin)
+    admin.add_view(MeetingRoomAdmin)
+    admin.add_view(MeetingParticipantAdmin)
+    admin.add_view(GuestSessionAdmin)
+    admin.add_view(MeetingSummaryAdmin)
+    admin.add_view(ReportAdmin)
 
     return admin

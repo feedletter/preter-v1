@@ -96,6 +96,23 @@ async function storeTokens(tokens: Pick<TokenResponse, 'access_token' | 'refresh
   await SecureStore.setItemAsync('refresh_token', tokens.refresh_token);
 }
 
+export async function logout(): Promise<void> {
+  // Profile PRD 9.2: 서버 RT 폐기 시도 후, 실패하더라도 로컬 토큰은 항상 지운다.
+  const accessToken = await SecureStore.getItemAsync('access_token');
+  if (accessToken) {
+    try {
+      await fetch(`${API_URL}/api/v1/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+    } catch {
+      // 네트워크 오류여도 로컬 로그아웃은 계속 진행한다.
+    }
+  }
+  await SecureStore.deleteItemAsync('access_token');
+  await SecureStore.deleteItemAsync('refresh_token');
+}
+
 function parseTokensFromRedirect(
   url: string,
 ): Pick<TokenResponse, 'access_token' | 'refresh_token'> | null {

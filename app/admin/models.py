@@ -12,7 +12,7 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import ForeignKey, Numeric
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -115,3 +115,119 @@ class OAuthProvider(Base):
 
     def __str__(self) -> str:
         return f"{self.provider}:{self.provider_uid}"
+
+
+class MeetingRoom(Base):
+    __tablename__ = "meeting_rooms"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    host_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.users.id"))
+    room_code: Mapped[str]
+    title: Mapped[str | None]
+    password_hash: Mapped[str | None]
+    max_participants: Mapped[int]
+    primary_language: Mapped[str]
+    status: Mapped[str]
+    scheduled_at: Mapped[datetime | None]
+    started_at: Mapped[datetime | None]
+    ended_at: Mapped[datetime | None]
+    expires_at: Mapped[datetime]
+    created_at: Mapped[datetime]
+    deleted_at: Mapped[datetime | None]
+
+    host: Mapped["User"] = relationship()
+    participants: Mapped[list["MeetingParticipant"]] = relationship(back_populates="room")
+
+    def __str__(self) -> str:
+        return f"{self.room_code} ({self.status})"
+
+
+class MeetingParticipant(Base):
+    __tablename__ = "meeting_participants"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.meeting_rooms.id")
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("public.users.id"))
+    guest_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.guest_sessions.id")
+    )
+    display_name: Mapped[str]
+    role: Mapped[str]
+    language: Mapped[str]
+    audio_enabled: Mapped[bool]
+    joined_at: Mapped[datetime]
+    left_at: Mapped[datetime | None]
+    is_kicked: Mapped[bool]
+
+    room: Mapped["MeetingRoom"] = relationship(back_populates="participants")
+
+    def __str__(self) -> str:
+        return f"{self.display_name} ({self.role})"
+
+
+class GuestSession(Base):
+    __tablename__ = "guest_sessions"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    session_token: Mapped[str]
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.meeting_rooms.id")
+    )
+    display_name: Mapped[str]
+    email: Mapped[str | None]
+    language: Mapped[str]
+    audio_enabled: Mapped[bool]
+    device_info: Mapped[dict | None] = mapped_column(JSONB)
+    ip_address: Mapped[str | None]
+    summary_sent: Mapped[bool]
+    joined_at: Mapped[datetime]
+    expires_at: Mapped[datetime]
+    created_at: Mapped[datetime]
+
+    def __str__(self) -> str:
+        return self.display_name
+
+
+class MeetingSummary(Base):
+    __tablename__ = "meeting_summaries"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.meeting_rooms.id")
+    )
+    summary_text: Mapped[str | None]
+    action_items: Mapped[list] = mapped_column(JSONB)
+    script_url: Mapped[str | None]
+    status: Mapped[str]
+    ai_model: Mapped[str | None]
+    processing_sec: Mapped[int | None]
+    created_at: Mapped[datetime]
+    completed_at: Mapped[datetime | None]
+    deleted_at: Mapped[datetime | None]
+
+    def __str__(self) -> str:
+        return f"summary:{self.room_id} ({self.status})"
+
+
+class Report(Base):
+    __tablename__ = "reports"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.users.id"))
+    category: Mapped[str]
+    body: Mapped[str]
+    device_info: Mapped[dict | None] = mapped_column(JSONB)
+    app_version: Mapped[str | None]
+    created_at: Mapped[datetime]
+
+    user: Mapped["User"] = relationship()
+
+    def __str__(self) -> str:
+        return f"{self.category}: {self.body[:30]}"

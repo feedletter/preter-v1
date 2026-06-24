@@ -7,7 +7,17 @@
 
 from sqladmin import ModelView
 
-from app.admin.models import BusinessCard, OAuthProvider, User, UserPlan
+from app.admin.models import (
+    BusinessCard,
+    GuestSession,
+    MeetingParticipant,
+    MeetingRoom,
+    MeetingSummary,
+    OAuthProvider,
+    Report,
+    User,
+    UserPlan,
+)
 
 
 class UserAdmin(ModelView, model=User):
@@ -87,3 +97,107 @@ class OAuthProviderAdmin(ModelView, model=OAuthProvider):
     # 토큰 값은 운영자도 화면에서 노출하지 않음 (탈취 위험 — 별도 암호화 작업 전까지는 더더욱)
     column_details_exclude_list = [OAuthProvider.access_token, OAuthProvider.refresh_token]
     can_create = False
+
+
+class MeetingRoomAdmin(ModelView, model=MeetingRoom):
+    name = "미팅룸"
+    name_plural = "미팅룸"
+    icon = "fa-solid fa-door-open"
+    category = "게스트 입장"
+
+    column_list = [
+        MeetingRoom.room_code,
+        MeetingRoom.title,
+        MeetingRoom.host,
+        MeetingRoom.status,
+        MeetingRoom.max_participants,
+        MeetingRoom.scheduled_at,
+        MeetingRoom.ended_at,
+        MeetingRoom.created_at,
+    ]
+    column_searchable_list = [MeetingRoom.room_code, MeetingRoom.title]
+    column_sortable_list = [MeetingRoom.created_at, MeetingRoom.status]
+    column_default_sort = [(MeetingRoom.created_at, True)]
+    # 비밀번호 해시는 운영자도 노출하지 않음
+    column_details_exclude_list = [MeetingRoom.password_hash]
+    column_list_exclude_list = [MeetingRoom.password_hash]
+    can_create = False
+
+
+class MeetingParticipantAdmin(ModelView, model=MeetingParticipant):
+    name = "참가자"
+    name_plural = "미팅 참가자"
+    icon = "fa-solid fa-users"
+    category = "게스트 입장"
+
+    column_list = [
+        MeetingParticipant.display_name,
+        MeetingParticipant.room,
+        MeetingParticipant.role,
+        MeetingParticipant.language,
+        MeetingParticipant.joined_at,
+        MeetingParticipant.left_at,
+        MeetingParticipant.is_kicked,
+    ]
+    column_sortable_list = [MeetingParticipant.joined_at]
+    can_create = False
+
+
+class GuestSessionAdmin(ModelView, model=GuestSession):
+    name = "게스트 세션"
+    name_plural = "게스트 세션"
+    icon = "fa-solid fa-user-secret"
+    category = "게스트 입장"
+
+    column_list = [
+        GuestSession.display_name,
+        GuestSession.room_id,
+        GuestSession.email,
+        GuestSession.language,
+        GuestSession.joined_at,
+        GuestSession.expires_at,
+        GuestSession.summary_sent,
+    ]
+    column_sortable_list = [GuestSession.joined_at, GuestSession.expires_at]
+    # JWT 토큰 값은 탈취 위험으로 노출하지 않음
+    column_details_exclude_list = [GuestSession.session_token]
+    column_list_exclude_list = [GuestSession.session_token]
+    can_create = False
+    can_edit = False
+
+
+class MeetingSummaryAdmin(ModelView, model=MeetingSummary):
+    name = "미팅 요약"
+    name_plural = "미팅 요약"
+    icon = "fa-solid fa-file-lines"
+    category = "게스트 입장"
+
+    column_list = [
+        MeetingSummary.room_id,
+        MeetingSummary.status,
+        MeetingSummary.ai_model,
+        MeetingSummary.processing_sec,
+        MeetingSummary.created_at,
+        MeetingSummary.completed_at,
+    ]
+    column_sortable_list = [MeetingSummary.created_at]
+    can_create = False
+
+
+class ReportAdmin(ModelView, model=Report):
+    name = "신고"
+    name_plural = "앱 문제 신고"
+    icon = "fa-solid fa-triangle-exclamation"
+    category = "운영"
+
+    column_list = [
+        Report.user,
+        Report.category,
+        Report.body,
+        Report.app_version,
+        Report.created_at,
+    ]
+    column_sortable_list = [Report.created_at, Report.category]
+    column_default_sort = [(Report.created_at, True)]
+    can_create = False
+    can_edit = False

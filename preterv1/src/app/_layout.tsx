@@ -14,6 +14,10 @@ export default function RootLayout() {
         <Stack.Screen name="signup-profile" />
         <Stack.Screen name="sns-signup-card-intro" />
         <Stack.Screen name="sns-signup-form" />
+        <Stack.Screen name="guest-meeting-input" />
+        <Stack.Screen name="create-meeting" />
+        <Stack.Screen name="subscription" />
+        <Stack.Screen name="profile-info" />
         <Stack.Screen name="main" />
       </Stack>
     </>

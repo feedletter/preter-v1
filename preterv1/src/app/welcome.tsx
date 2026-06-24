@@ -8,10 +8,6 @@ import { Brand, Spacing } from '@/constants/theme';
 import { AuthApiError, signInWithOAuth } from '@/lib/auth';
 import { setSnsDraft } from '@/lib/sns-draft';
 
-function showComingSoon(provider: string) {
-  Alert.alert('준비 중', `${provider} 로그인은 아직 지원되지 않습니다.`);
-}
-
 function ContinueButton({
   label,
   icon,
@@ -111,7 +107,7 @@ export default function WelcomeScreen() {
           />
           <ContinueButton
             label="게스트로 미팅 참여"
-            onPress={() => showComingSoon('게스트 미팅 참여')}
+            onPress={() => router.push('/guest-meeting-input')}
           />
         </View>
       </SafeAreaView>

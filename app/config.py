@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     database_url: str = ""
     admin_session_secret: str = "dev-only-change-me"
 
+    # Guest는 Supabase Auth 계정이 없어 별도 RS256 서명 JWT로 신원을 증명한다.
+    guest_jwt_private_key: str = ""
+    guest_jwt_public_key: str = ""
+
+    # 미팅 요약 이메일 발송 (Resend)
+    resend_api_key: str = ""
+    resend_from_email: str = "Preter <no-reply@preter.me>"
+
     class Config:
         env_file = ".env"
 
