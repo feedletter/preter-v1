@@ -141,7 +141,7 @@ class Document(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.users.id"))
     title: Mapped[str]
-    file_url: Mapped[str]
+    file_url: Mapped[str | None]
     created_at: Mapped[datetime]
     deleted_at: Mapped[datetime | None]
 
@@ -149,6 +149,47 @@ class Document(Base):
 
     def __str__(self) -> str:
         return self.title
+
+
+class DocumentMessage(Base):
+    __tablename__ = "document_messages"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.documents.id"))
+    type: Mapped[str]
+    content: Mapped[str | None]
+    file_url: Mapped[str | None]
+    file_name: Mapped[str | None]
+    status: Mapped[str]
+    analysis_result: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime]
+
+    document: Mapped["Document"] = relationship()
+
+    def __str__(self) -> str:
+        return f"{self.type}:{self.document_id} ({self.status})"
+
+
+class DocumentContext(Base):
+    __tablename__ = "document_contexts"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.documents.id"))
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.document_messages.id")
+    )
+    analysis_points: Mapped[dict] = mapped_column(JSONB)
+    technical_terms: Mapped[dict | None] = mapped_column(JSONB)
+    language_hint: Mapped[str | None]
+    priority: Mapped[str | None]
+    created_at: Mapped[datetime]
+
+    document: Mapped["Document"] = relationship()
+
+    def __str__(self) -> str:
+        return f"context:{self.document_id}"
 
 
 class ProjectDocument(Base):

@@ -14,6 +14,8 @@ from app.admin.db import get_admin_engine
 from app.admin.views import (
     BusinessCardAdmin,
     DocumentAdmin,
+    DocumentContextAdmin,
+    DocumentMessageAdmin,
     GuestSessionAdmin,
     MeetingParticipantAdmin,
     MeetingRoomAdmin,
@@ -45,6 +47,8 @@ def setup_admin(app: FastAPI) -> Admin:
     admin.add_view(OAuthProviderAdmin)
     admin.add_view(ProjectAdmin)
     admin.add_view(DocumentAdmin)
+    admin.add_view(DocumentMessageAdmin)
+    admin.add_view(DocumentContextAdmin)
     admin.add_view(ProjectDocumentAdmin)
     admin.add_view(ProjectInstructionAdmin)
     admin.add_view(MeetingRoomAdmin)

@@ -10,6 +10,8 @@ from sqladmin import ModelView
 from app.admin.models import (
     BusinessCard,
     Document,
+    DocumentContext,
+    DocumentMessage,
     GuestSession,
     MeetingParticipant,
     MeetingRoom,
@@ -138,6 +140,42 @@ class DocumentAdmin(ModelView, model=Document):
     column_searchable_list = [Document.title]
     column_sortable_list = [Document.created_at]
     column_default_sort = [(Document.created_at, True)]
+    can_create = False
+
+
+class DocumentMessageAdmin(ModelView, model=DocumentMessage):
+    name = "자료 메시지"
+    name_plural = "자료 메시지"
+    icon = "fa-solid fa-comment-dots"
+    category = "미팅/자료"
+
+    column_list = [
+        DocumentMessage.document,
+        DocumentMessage.type,
+        DocumentMessage.status,
+        DocumentMessage.file_name,
+        DocumentMessage.created_at,
+    ]
+    column_searchable_list = [DocumentMessage.file_name, DocumentMessage.content]
+    column_sortable_list = [DocumentMessage.created_at]
+    column_default_sort = [(DocumentMessage.created_at, True)]
+    can_create = False
+
+
+class DocumentContextAdmin(ModelView, model=DocumentContext):
+    name = "통역 맥락"
+    name_plural = "통역 맥락"
+    icon = "fa-solid fa-brain"
+    category = "미팅/자료"
+
+    column_list = [
+        DocumentContext.document,
+        DocumentContext.language_hint,
+        DocumentContext.priority,
+        DocumentContext.created_at,
+    ]
+    column_sortable_list = [DocumentContext.created_at]
+    column_default_sort = [(DocumentContext.created_at, True)]
     can_create = False
 
 
