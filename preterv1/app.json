@@ -22,7 +22,11 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "output": "static",
@@ -67,6 +71,12 @@
         "projectId": "5448a968-4b23-45bc-a11e-a98ec6cabc49"
       }
     },
-    "owner": "peterv1"
+    "owner": "peterv1",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/5448a968-4b23-45bc-a11e-a98ec6cabc49"
+    }
   }
 }

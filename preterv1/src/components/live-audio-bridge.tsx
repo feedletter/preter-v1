@@ -13,6 +13,7 @@ export type EngineStatus =
   | 'ready'
   | 'ws-open'
   | 'ws-close'
+  | 'ws-reconnecting'
   | 'mic-started'
   | 'mic-stopped'
   | 'error';

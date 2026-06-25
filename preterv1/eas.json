@@ -6,21 +6,24 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "development"
     },
     "preview": {
       "distribution": "internal",
       "env": {
         "EXPO_PUBLIC_API_URL": "https://preter-backend-859864974430.asia-northeast3.run.app",
         "EXPO_PUBLIC_SUPABASE_URL": "https://alulpyrzygtrqbaowkdk.supabase.co"
-      }
+      },
+      "channel": "preview"
     },
     "production": {
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_API_URL": "https://preter-backend-859864974430.asia-northeast3.run.app",
         "EXPO_PUBLIC_SUPABASE_URL": "https://alulpyrzygtrqbaowkdk.supabase.co"
-      }
+      },
+      "channel": "production"
     }
   },
   "submit": {

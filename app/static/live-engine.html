@@ -30,6 +30,28 @@
   var nextPlayTime = 0;    // 재생 큐잉 시점(지터 방지)
   var TARGET_SR = 16000;   // Gemini Live 입력 규격
 
+  // ---- WS 자동 재연결 ----------------------------------------------------
+  // ws_error/close가 한번 발생하면(네트워크 끊김, 서버 재시작, Gemini측 끊김 전파 등)
+  // 재연결을 아무도 시도하지 않아서, processor.onaudioprocess가 ws.readyState를
+  // 계속 체크만 하고 조용히 오디오를 버리는 상태로 영구히 멈춰 있었다(마이크가 죽은
+  // 것처럼 보이는 버그의 원인). 여기서 지수 백오프로 같은 url에 재연결을 시도한다.
+  var lastUrl = null;
+  var intentionalClose = false;
+  var reconnectAttempts = 0;
+  var reconnectTimer = null;
+  var MAX_RECONNECT_DELAY_MS = 10000;
+
+  function scheduleReconnect() {
+    if (intentionalClose || !lastUrl || reconnectTimer) return;
+    reconnectAttempts += 1;
+    var delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_DELAY_MS);
+    emitStatus('ws-reconnecting', 'attempt:' + reconnectAttempts + ' delay:' + delay);
+    reconnectTimer = setTimeout(function () {
+      reconnectTimer = null;
+      if (!intentionalClose && lastUrl) openSocket(lastUrl, true);
+    }, delay);
+  }
+
   function toRN(obj) {
     if (window.ReactNativeWebView) {
       window.ReactNativeWebView.postMessage(JSON.stringify(obj));
@@ -41,17 +63,26 @@
   }
 
   // ---- WebSocket -------------------------------------------------------
-  function openSocket(url) {
-    closeSocket();
+  function openSocket(url, isReconnect) {
+    if (!isReconnect) {
+      // 명시적 connect 명령(RN이 토큰을 새로 붙여 보낸 경우 등) — 재연결 상태 초기화.
+      intentionalClose = false;
+      reconnectAttempts = 0;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    }
+    lastUrl = url;
+    closeSocket(true);
     try {
       ws = new WebSocket(url);
       ws.binaryType = 'arraybuffer';
     } catch (e) {
       emitStatus('error', 'socket_init:' + e.message);
+      scheduleReconnect();
       return;
     }
 
     ws.onopen = function () {
+      reconnectAttempts = 0;
       emitStatus('ws-open');
     };
 
@@ -74,11 +105,19 @@
       toRN({ __event: true, payload: msg });
     };
 
-    ws.onclose = function () { emitStatus('ws-close'); };
+    ws.onclose = function () {
+      emitStatus('ws-close');
+      scheduleReconnect();
+    };
     ws.onerror = function () { emitStatus('error', 'ws_error'); };
   }
 
-  function closeSocket() {
+  function closeSocket(keepUrl) {
+    if (!keepUrl) {
+      intentionalClose = true;
+      lastUrl = null;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    }
     if (ws) {
       try { ws.close(); } catch (e) {}
       ws = null;

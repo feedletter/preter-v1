@@ -163,8 +163,30 @@ class RoomState:
             except Exception:
                 logger.exception("bypass 오디오 전송 실패: user_id=%s", other.user_id)
 
-        for session in turn.sessions.values():
-            await session.send_audio(chunk)
+        # Gemini Live 세션 송신은 ~10분마다 끊기는 WS 위에서 동작하므로 실패할 수 있다
+        # (CLAUDE.md 확정 사항). 여기서 예외가 새면 room_session의 while 루프가 그대로
+        # 죽으면서 클라이언트 WS까지 ws_error로 끊기고, 이후 마이크가 영구히 먹통이
+        # 되므로(아무도 재연결을 안 함) 세션 단위로만 격리해서 죽인다.
+        dead_langs: list[str] = []
+        for target_lang, session in turn.sessions.items():
+            try:
+                await session.send_audio(chunk)
+            except Exception:
+                logger.exception(
+                    "Gemini 세션 송신 실패, 해당 언어 세션만 종료: room_id=%s target_lang=%s",
+                    self.room_id,
+                    target_lang,
+                )
+                dead_langs.append(target_lang)
+        for target_lang in dead_langs:
+            session = turn.sessions.pop(target_lang, None)
+            if session is not None:
+                try:
+                    await session.close()
+                except Exception:
+                    logger.exception("죽은 세션 정리 실패: room_id=%s target_lang=%s", self.room_id, target_lang)
+        if not turn.sessions and not turn.finalized:
+            await self._finalize_turn(turn)
 
     async def _start_turn(self, speaker_id: str) -> None:
         speaker = self.participants.get(speaker_id)

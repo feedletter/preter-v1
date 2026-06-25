@@ -334,7 +334,9 @@ export default function HostLiveSessionScreen() {
           roomId={roomId}
           onEvent={handleEvent}
           onStatus={(status, detail) => {
-            if (status === 'error') {
+            // ws_error는 엔진이 자동 재연결을 시도하므로(live-engine.html) 알림으로
+            // 매번 끊어 보여주지 않는다 — 마이크 권한 등 실제 복구 불가 오류만 띄운다.
+            if (status === 'error' && detail !== 'ws_error') {
               Alert.alert('오디오 오류', detail ?? '알 수 없는 오류');
             }
           }}

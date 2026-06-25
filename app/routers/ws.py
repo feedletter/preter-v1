@@ -183,7 +183,16 @@ async def room_session(websocket: WebSocket, room_id: str, token: str):
                 break
             chunk = message.get("bytes")
             if chunk is not None:
-                await room.handle_audio_chunk(user_id, chunk)
+                try:
+                    await room.handle_audio_chunk(user_id, chunk)
+                except Exception:
+                    # handle_audio_chunk 내부에서 못 잡은 예외가 새면 이 while 루프가
+                    # 죽으면서 클라이언트 WS가 ws_error로 끊기고, 클라이언트는 자동
+                    # 재연결을 하지 않아 마이크가 영구히 먹통이 된다(증상 리포트 원인).
+                    # 참가자 1명 처리 실패가 본인 소켓 전체를 끊지 않도록 격리한다.
+                    logger.exception(
+                        "오디오 청크 처리 실패, 연결 유지: room_id=%s user_id=%s", room_id, user_id
+                    )
             # JSON 텍스트 메시지(PING heartbeat 등)는 별도 처리 없이 무시한다.
     except WebSocketDisconnect:
         logger.info("참가자 연결 종료: room_id=%s user_id=%s", room_id, user_id)
