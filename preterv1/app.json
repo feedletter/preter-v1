@@ -8,7 +8,7 @@
     "scheme": "preterv1",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
+      "icon": "./assets/images/icon.png",
       "bundleIdentifier": "com.preter.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -53,7 +53,9 @@
           "photosPermission": "프로필 사진을 선택하기 위해 사진 라이브러리 접근이 필요합니다",
           "cameraPermission": "프로필 사진을 촬영하기 위해 카메라 접근이 필요합니다"
         }
-      ]
+      ],
+      "expo-asset",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,

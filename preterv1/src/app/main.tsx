@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -16,30 +16,36 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LeftSidePanel } from '@/components/left-side-panel';
 import { ProfileSheet } from '@/components/profile-sheet';
+import { Snackbar } from '@/components/snackbar';
 import { Brand, Spacing } from '@/constants/theme';
 import { getMe } from '@/lib/auth';
-import { fetchUpcomingMeetings, Meeting } from '@/lib/meetings';
+import { Document, DocumentsApiError, fetchDocuments } from '@/lib/documents';
+import {
+  fetchRecentMeetings,
+  fetchUpcomingMeetings,
+  Meeting,
+  MeetingsApiError,
+  RecentMeeting,
+} from '@/lib/meetings';
+import { fetchProjects, Project, ProjectsApiError } from '@/lib/projects';
+import { registerParticipant } from '@/lib/rooms';
+import { getMyPlan, getMyProfile, MyPlan, MyProfile } from '@/lib/users';
 
-// PRD 4.2: 시간대별 인사 메시지 — 디바이스 로컬 시간(HH) 기준, 시간대마다 3~5개 중 하루 1개를 랜덤 노출.
-const GREETING_CANDIDATES: { range: [number, number]; messages: string[] }[] = [
-  { range: [0, 6], messages: ['아직 일하고 계신가요, {name}님? 오늘도 응원해요 🌙', '늦은 시간이네요, {name}님 🌙 잠시 쉬어가도 좋아요'] },
-  { range: [6, 10], messages: ['좋은 아침이에요, {name}님 ☀️ 오늘 성공적인 미팅을 기원해요', '상쾌한 아침이에요, {name}님 ☀️ 오늘도 좋은 하루 되세요'] },
-  { range: [10, 12], messages: ['좋은 하루예요, {name}님 🌿 오늘 수출 협상을 응원해요'] },
-  { range: [12, 14], messages: ['점심 시간이에요, {name}님 🍱 오후 미팅도 힘내세요'] },
-  { range: [14, 18], messages: ['오늘도 열심히 하고 계시군요, {name}님 💪 좋은 성과 기원해요'] },
-  { range: [18, 21], messages: ['수고하셨어요, {name}님 🌆 오늘 하루도 잘 마무리하세요'] },
-  { range: [21, 24], messages: ['오늘 하루도 고생하셨어요, {name}님 🌟 내일도 응원해요'] },
+// PRD 4.2: 시간대별 인사 메시지 — 디바이스 로컬 시간(HH) 기준, 시간대별로 정해진 문구 노출.
+const GREETING_CANDIDATES: { range: [number, number]; message: string }[] = [
+  { range: [0, 6], message: '아직 일하고 계신가요, {name}님?\n오늘도 응원해요' },
+  { range: [6, 10], message: '좋은 아침이에요, {name}님\n오늘 성공적인 미팅을 기원해요' },
+  { range: [10, 12], message: '좋은 하루예요, {name}님\n오늘 수출 협상을 응원해요' },
+  { range: [12, 14], message: '점심 시간이에요, {name}님\n오후 미팅도 힘내세요' },
+  { range: [14, 18], message: '오늘도 열심히 하고 계시군요,\n{name}님 좋은 성과 기원해요' },
+  { range: [18, 21], message: '수고하셨어요, {name}님\n오늘 하루도 잘 마무리하세요' },
+  { range: [21, 24], message: '오늘도 고생하셨어요,\n{name}님 내일도 응원해요' },
 ];
 
 function pickGreeting(name: string | null): string {
   const hour = new Date().getHours();
   const slot = GREETING_CANDIDATES.find(({ range }) => hour >= range[0] && hour < range[1]);
-  const messages = slot?.messages ?? GREETING_CANDIDATES[0].messages;
-  // "매일 같은 메시지" 노출을 위해 날짜를 시드로 사용 (당일 내에는 고정, 날짜가 바뀌면 갱신)
-  const dayOfYear = Math.floor(
-    (Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000,
-  );
-  const message = messages[dayOfYear % messages.length];
+  const message = slot?.message ?? GREETING_CANDIDATES[0].message;
   return message.replace('{name}', name?.trim() ? name.trim() : '');
 }
 
@@ -91,13 +97,53 @@ function groupMeetingsByDate(meetings: Meeting[]): MeetingGroup[] {
 }
 
 function MeetingRow({ meeting, isLast }: { meeting: Meeting; isLast: boolean }) {
+  const router = useRouter();
   const isLive = meeting.status === 'active';
+  const [entering, setEntering] = useState(false);
 
-  function handlePress() {
-    if (isLive) {
-      Alert.alert('통역 세션은 준비 중이에요', '곧 라이브 세션으로 바로 연결할 수 있게 될게요.');
-    } else {
-      Alert.alert('미팅 상세 화면은 준비 중이에요');
+  // PRD: 예약/진행 중 미팅 리스트 탭 → 호스트는 host-live-session, 멤버는 join-live-session으로
+  // 재입장한다. waiting 상태면 각 화면이 자체적으로 대기 UI를 보여주고 자동 전환한다.
+  async function handlePress() {
+    if (entering) return;
+    setEntering(true);
+    try {
+      if (meeting.is_host) {
+        router.push({
+          pathname: '/host-live-session',
+          params: {
+            room_id: meeting.id,
+            room_code: meeting.room_code,
+            title: meeting.title ?? '미팅',
+            started: isLive ? '1' : undefined,
+          },
+        });
+        return;
+      }
+
+      let language = meeting.language;
+      if (isLive) {
+        try {
+          const profile = await getMyProfile();
+          language = profile.primary_language;
+        } catch {
+          // 프로필 조회 실패해도 기본 언어로 진행.
+        }
+        await registerParticipant(meeting.id, { role: 'member', language, audio_enabled: true });
+      }
+
+      router.push({
+        pathname: '/join-live-session',
+        params: {
+          room_id: meeting.id,
+          room_code: meeting.room_code,
+          title: meeting.title ?? '미팅',
+          status: meeting.status,
+        },
+      });
+    } catch {
+      Alert.alert('미팅에 입장할 수 없어요', '잠시 후 다시 시도해주세요');
+    } finally {
+      setEntering(false);
     }
   }
 
@@ -126,15 +172,33 @@ function MeetingRow({ meeting, isLast }: { meeting: Meeting; isLast: boolean }) 
 
 export default function MainScreen() {
   const router = useRouter();
+  const { reservationSnackbar } = useLocalSearchParams<{ reservationSnackbar?: string }>();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [userName, setUserName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [profileVisible, setProfileVisible] = useState(false);
+  const [profile, setProfile] = useState<MyProfile | null>(null);
+  const [plan, setPlan] = useState<MyPlan | null>(null);
   const [leftPanelVisible, setLeftPanelVisible] = useState(false);
+  const [sideProjects, setSideProjects] = useState<Project[]>([]);
+  const [sideMeetings, setSideMeetings] = useState<RecentMeeting[]>([]);
+  const [sideDocuments, setSideDocuments] = useState<Document[]>([]);
+  const [sideLoading, setSideLoading] = useState(true);
+  const [sideLoadError, setSideLoadError] = useState(false);
+  const [snackbarVisible, setSnackbarVisible] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
   // 구독/정보 페이지로 나갔다가 돌아왔을 때 Profile Sheet를 다시 열어주기 위한 플래그.
   const pendingReopenProfile = useRef(false);
+
+  useEffect(() => {
+    if (reservationSnackbar) {
+      setSnackbarMessage(decodeURIComponent(reservationSnackbar));
+      setSnackbarVisible(true);
+      router.setParams({ reservationSnackbar: undefined });
+    }
+  }, [reservationSnackbar, router]);
 
   useFocusEffect(
     useCallback(() => {
@@ -154,12 +218,45 @@ export default function MainScreen() {
     } catch {
       setLoadError(true);
     }
+    // 프로필/플랜은 메인 화면 진입 시 한 번에 받아와서 캐싱한다 — 프로필 바텀시트를
+    // 열 때마다 새로 fetch하면 시트가 뜨는 순간 빈 데이터가 잠깐 보이는 지연이 생긴다.
+    const [profileResult, planResult] = await Promise.all([
+      getMyProfile().catch(() => null),
+      getMyPlan().catch(() => null),
+    ]);
+    setProfile(profileResult);
+    setPlan(planResult);
   }, []);
 
   useEffect(() => {
     setLoading(true);
     load().finally(() => setLoading(false));
   }, [load]);
+
+  // LeftSidePanel(미팅/자료 탭) 데이터 — 패널을 열 때마다 새로 fetch하면 매번 로딩이
+  // 보였다. 메인 화면 진입 시 한 번에 미리 받아두고, 패널의 pull-to-refresh로만 재호출한다.
+  const loadSidePanelData = useCallback(async () => {
+    try {
+      const [projectsResult, meetingsResult, documentsResult] = await Promise.all([
+        fetchProjects(),
+        fetchRecentMeetings(),
+        fetchDocuments(),
+      ]);
+      setSideProjects(projectsResult);
+      setSideMeetings(meetingsResult);
+      setSideDocuments(documentsResult);
+      setSideLoadError(false);
+    } catch (error) {
+      if (error instanceof ProjectsApiError || error instanceof MeetingsApiError || error instanceof DocumentsApiError) {
+        setSideLoadError(true);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    setSideLoading(true);
+    loadSidePanelData().finally(() => setSideLoading(false));
+  }, [loadSidePanelData]);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -173,6 +270,8 @@ export default function MainScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
+
+      <Snackbar visible={snackbarVisible} message={snackbarMessage} onHide={() => setSnackbarVisible(false)} />
 
       <View style={styles.topNav}>
         <Pressable
@@ -190,16 +289,6 @@ export default function MainScreen() {
           <Text style={styles.profileInitial}>{(userName ?? '?').trim().charAt(0)}</Text>
         </Pressable>
       </View>
-
-      <LeftSidePanel visible={leftPanelVisible} onClose={() => setLeftPanelVisible(false)} />
-
-      <ProfileSheet
-        visible={profileVisible}
-        onClose={() => setProfileVisible(false)}
-        onNavigateAway={() => {
-          pendingReopenProfile.current = true;
-        }}
-      />
 
       <ScrollView
         style={styles.scrollArea}
@@ -220,10 +309,13 @@ export default function MainScreen() {
               <Text style={styles.retryButtonLabel}>다시 시도</Text>
             </Pressable>
           </View>
-        ) : meetings.length === 0 ? (
+        ) : groups.length === 0 ? (
+          // meetings 배열에 항목이 있어도 그룹화(groupMeetingsByDate)에서 날짜 정보가 없어
+          // 전부 걸러지거나, 미팅이 모두 종료돼 백엔드가 빈 배열을 내려주는 경우 등 —
+          // 어떤 이유든 실제로 보여줄 그룹이 없으면 빈 박스 대신 미팅 없는 상태로 취급한다.
           <View style={styles.defaultMessage}>
             <Image
-              source={require('@/assets/images/main/logo-icon.png')}
+              source={require('@/assets/images/main/logo-emblem.png')}
               style={styles.defaultLogo}
               contentFit="contain"
             />
@@ -257,18 +349,54 @@ export default function MainScreen() {
         <View style={styles.choiceButtons}>
           <Pressable
             style={styles.joinButton}
-            onPress={() => router.push('/guest-meeting-input')}
+            onPress={() => router.push('/join-meeting')}
             accessibilityRole="button">
+            <Image
+              source={require('@/assets/images/main/join-icon.png')}
+              style={styles.choiceButtonIcon}
+              contentFit="contain"
+            />
             <Text style={styles.joinButtonLabel}>미팅 참가하기</Text>
           </Pressable>
           <Pressable
             style={styles.createButton}
             onPress={() => router.push('/create-meeting')}
             accessibilityRole="button">
+            <Image
+              source={require('@/assets/images/main/create-icon.png')}
+              style={styles.choiceButtonIcon}
+              contentFit="contain"
+            />
             <Text style={styles.createButtonLabel}>미팅 생성하기</Text>
           </Pressable>
         </View>
       </View>
+
+      {/* LeftSidePanel/ProfileSheet는 더 이상 Modal이 아닌 일반 절대 위치 오버레이라
+          touch/paint 순서가 JSX 트리 순서를 그대로 따른다 — 항상 최상단에서 받도록
+          SafeAreaView의 마지막 자식으로 둔다. */}
+      <LeftSidePanel
+        visible={leftPanelVisible}
+        onClose={() => setLeftPanelVisible(false)}
+        projects={sideProjects}
+        meetings={sideMeetings}
+        documents={sideDocuments}
+        loading={sideLoading}
+        loadError={sideLoadError}
+        onRefresh={loadSidePanelData}
+        onProjectCreated={(project) => setSideProjects((prev) => [project, ...prev])}
+      />
+
+      <ProfileSheet
+        visible={profileVisible}
+        onClose={() => setProfileVisible(false)}
+        onNavigateAway={() => {
+          pendingReopenProfile.current = true;
+        }}
+        profile={profile}
+        plan={plan}
+        onProfileChange={setProfile}
+      />
     </SafeAreaView>
   );
 }
@@ -356,11 +484,11 @@ const styles = StyleSheet.create({
     height: 38,
   },
   greetingText: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '400',
     color: Brand.primary,
     textAlign: 'center',
-    lineHeight: 30,
+    lineHeight: 24,
   },
   meetingListCard: {
     borderWidth: 1,
@@ -452,8 +580,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
     borderRadius: 8,
     paddingVertical: 16,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 9,
   },
   joinButtonLabel: {
     fontSize: 16,
@@ -464,12 +594,18 @@ const styles = StyleSheet.create({
     backgroundColor: Brand.primary,
     borderRadius: 8,
     paddingVertical: 16,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 8,
   },
   createButtonLabel: {
     fontSize: 16,
     fontWeight: '700',
     color: 'white',
+  },
+  choiceButtonIcon: {
+    width: 20,
+    height: 20,
   },
 });

@@ -6,12 +6,14 @@ export type MeetingStatus = 'waiting' | 'active' | 'ended';
 
 export type Meeting = {
   id: string;
+  room_code: string;
   title: string | null;
   status: MeetingStatus;
   scheduled_at: string | null;
   started_at: string | null;
   ended_at: string | null;
   language: string;
+  is_host: boolean;
   project_id: string | null;
   project_name: string | null;
 };

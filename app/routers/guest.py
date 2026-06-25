@@ -52,7 +52,7 @@ async def join(body: JoinRequest):
 
     room = (
         client.table("meeting_rooms")
-        .select("id, title, status, password_hash, scheduled_at, ended_at, max_participants")
+        .select("id, title, status, password, scheduled_at, ended_at, max_participants")
         .eq("room_code", body.room_code)
         .is_("deleted_at", "null")
         .execute()
@@ -86,10 +86,8 @@ async def join(body: JoinRequest):
             },
         )
 
-    if room_row["password_hash"]:
-        if not body.password or not guest_auth.verify_password(
-            body.password, room_row["password_hash"]
-        ):
+    if room_row["password"]:
+        if not body.password or body.password != room_row["password"]:
             raise HTTPException(status_code=401, detail={"error": "WRONG_PASSWORD"})
 
     session_row = (

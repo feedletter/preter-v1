@@ -1,13 +1,14 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Animated,
   Dimensions,
   Easing,
-  Modal,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -19,11 +20,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CreateProjectSheet } from '@/components/create-project-sheet';
-import { UploadDocumentSheet } from '@/components/upload-document-sheet';
 import { Brand } from '@/constants/theme';
-import { Document, DocumentsApiError, fetchDocuments } from '@/lib/documents';
-import { fetchRecentMeetings, MeetingsApiError, RecentMeeting } from '@/lib/meetings';
-import { fetchProjects, Project, ProjectsApiError } from '@/lib/projects';
+import { createDocument, Document } from '@/lib/documents';
+import { RecentMeeting } from '@/lib/meetings';
+import { Project } from '@/lib/projects';
 
 // Figma LeftSide PRD 2장: 패널은 풀스크린(디바이스 전체 너비)로 슬라이드 — 사이드바처럼
 // 일부 영역만 차지하면 안 됨.
@@ -34,6 +34,13 @@ type Tab = 'meeting' | 'document';
 type LeftSidePanelProps = {
   visible: boolean;
   onClose: () => void;
+  projects: Project[];
+  meetings: RecentMeeting[];
+  documents: Document[];
+  loading: boolean;
+  loadError: boolean;
+  onRefresh: () => Promise<void>;
+  onProjectCreated: (project: Project) => void;
 };
 
 function formatDate(iso: string): string {
@@ -82,95 +89,58 @@ function HighlightedText({ text, keyword, style }: { text: string; keyword: stri
   );
 }
 
-export function LeftSidePanel({ visible, onClose }: LeftSidePanelProps) {
+export function LeftSidePanel({
+  visible,
+  onClose,
+  projects,
+  meetings,
+  documents,
+  loading,
+  loadError,
+  onRefresh,
+  onProjectCreated,
+}: LeftSidePanelProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [mounted, setMounted] = useState(visible);
-  const dimOpacity = useRef(new Animated.Value(0)).current;
   const translateX = useRef(new Animated.Value(-PANEL_WIDTH)).current;
 
   const [tab, setTab] = useState<Tab>('meeting');
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
 
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState(false);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [meetings, setMeetings] = useState<RecentMeeting[]>([]);
-  const [documents, setDocuments] = useState<Document[]>([]);
   const [createProjectVisible, setCreateProjectVisible] = useState(false);
-  const [uploadDocumentVisible, setUploadDocumentVisible] = useState(false);
+  const [creatingDocument, setCreatingDocument] = useState(false);
 
   useEffect(() => {
     if (visible) {
       setMounted(true);
-      // dim은 패널과 별개로 순수 fade만 — spring의 overshoot/잔동이 dim의 고정 길이
-      // fade와 타이밍이 어긋나며 버벅이는 느낌을 줬다. 둘 다 같은 duration/easing의
-      // timing으로 맞춰 동시에 끝나도록 통일.
-      Animated.parallel([
-        Animated.timing(dimOpacity, {
-          toValue: 1,
-          duration: 280,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.timing(translateX, {
-          toValue: 0,
-          duration: 280,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]).start();
+      Animated.timing(translateX, {
+        toValue: 0,
+        duration: 280,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
     } else {
-      Animated.parallel([
-        Animated.timing(dimOpacity, {
-          toValue: 0,
-          duration: 240,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.timing(translateX, {
-          toValue: -PANEL_WIDTH,
-          duration: 240,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]).start(({ finished }) => {
+      Animated.timing(translateX, {
+        toValue: -PANEL_WIDTH,
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
         if (finished) setMounted(false);
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const load = useCallback(async () => {
-    try {
-      const [projectsResult, meetingsResult, documentsResult] = await Promise.all([
-        fetchProjects(),
-        fetchRecentMeetings(),
-        fetchDocuments(),
-      ]);
-      setProjects(projectsResult);
-      setMeetings(meetingsResult);
-      setDocuments(documentsResult);
-      setLoadError(false);
-    } catch (error) {
-      if (error instanceof ProjectsApiError || error instanceof MeetingsApiError || error instanceof DocumentsApiError) {
-        setLoadError(true);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!visible) return;
-    setLoading(true);
-    load().finally(() => setLoading(false));
-  }, [visible, load]);
-
   // LeftSide PRD P3 — Pull to Refresh (양 탭 공통 데이터 소스라 동시에 새로고침).
+  // 데이터 자체는 메인 화면 진입 시 한 번 미리 받아오고, 패널을 열 때마다 다시 fetch하지
+  // 않는다 — 여기서는 사용자가 직접 당겨서 새로고침할 때만 부모의 재조회를 트리거한다.
   async function handleRefresh() {
     setRefreshing(true);
-    await load();
+    await onRefresh();
     setRefreshing(false);
   }
 
@@ -211,8 +181,12 @@ export function LeftSidePanel({ visible, onClose }: LeftSidePanelProps) {
   const documentTabNoSearchResults =
     !documentTabEmpty && debouncedQuery.length > 0 && filteredDocuments.length === 0;
 
+  // 패널을 닫고(onClose) push하면 패널이 닫히는 애니메이션과 화면 전환이 겹쳐서
+  // "메인으로 갔다가 다시 화면으로 이동하는" 것처럼 두 단계로 보이고, 뒤로가기 시에는
+  // 패널이 이미 닫힌 상태의 메인 화면으로 돌아가 버린다. 패널은 메인 화면에 계속
+  // 떠 있는 상태로 두고 그 위에 바로 push만 하면, 뒤로가기 시 패널이 열려있던
+  // 그 화면으로 자연스럽게 복귀한다.
   function handlePressProject(project: Project) {
-    onClose();
     router.push({ pathname: '/project-detail', params: { project_id: project.id } });
   }
 
@@ -221,11 +195,20 @@ export function LeftSidePanel({ visible, onClose }: LeftSidePanelProps) {
   }
 
   function handlePressDocument(doc: Document) {
-    Alert.alert('자료 보기 화면은 준비 중이에요');
+    router.push({ pathname: '/doc-detail', params: { document_id: doc.id } });
   }
 
-  function handlePressNewDocument() {
-    setUploadDocumentVisible(true);
+  async function handlePressNewDocument() {
+    if (creatingDocument) return;
+    setCreatingDocument(true);
+    try {
+      const document = await createDocument();
+      router.push({ pathname: '/doc-detail', params: { document_id: document.id } });
+    } catch {
+      Alert.alert('자료 생성에 실패했어요');
+    } finally {
+      setCreatingDocument(false);
+    }
   }
 
   function handleClose() {
@@ -236,17 +219,12 @@ export function LeftSidePanel({ visible, onClose }: LeftSidePanelProps) {
   if (!mounted) return null;
 
   return (
-    <Modal visible transparent animationType="none" onRequestClose={handleClose} statusBarTranslucent>
-      <View style={StyleSheet.absoluteFill}>
-        <Animated.View style={[styles.dim, { opacity: dimOpacity }]}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
-        </Animated.View>
-
-        <Animated.View
-          style={[
-            styles.panel,
-            { width: PANEL_WIDTH, paddingTop: insets.top, transform: [{ translateX }] },
-          ]}>
+    <>
+      <Animated.View
+        style={[styles.panel, { paddingTop: insets.top, transform: [{ translateX }] }]}>
+        <KeyboardAvoidingView
+          style={styles.panelKeyboardAvoider}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={styles.header}>
             <Image
               source={require('@/assets/images/brand/preter-logo-primary.png')}
@@ -256,10 +234,10 @@ export function LeftSidePanel({ visible, onClose }: LeftSidePanelProps) {
             <Pressable
               hitSlop={8}
               onPress={handleClose}
-              accessibilityLabel="이전 화면으로 돌아가기"
+              accessibilityLabel="닫기"
               accessibilityRole="button"
-              style={styles.backButton}>
-              <Text style={styles.backIcon}>‹</Text>
+              style={styles.closeButton}>
+              <Text style={styles.closeIcon}>✕</Text>
             </Pressable>
           </View>
 
@@ -293,7 +271,7 @@ export function LeftSidePanel({ visible, onClose }: LeftSidePanelProps) {
             ) : loadError ? (
               <View style={styles.centerMessage}>
                 <Text style={styles.errorText}>목록을 불러오지 못했어요</Text>
-                <Pressable onPress={load} style={styles.retryButton}>
+                <Pressable onPress={onRefresh} style={styles.retryButton}>
                   <Text style={styles.retryButtonLabel}>다시 시도</Text>
                 </Pressable>
               </View>
@@ -388,8 +366,16 @@ export function LeftSidePanel({ visible, onClose }: LeftSidePanelProps) {
                 <Text style={styles.floatingButtonLabel}>새 프로젝트</Text>
               </Pressable>
             ) : (
-              <Pressable style={styles.floatingButton} onPress={handlePressNewDocument} accessibilityRole="button">
-                <Text style={styles.floatingButtonLabel}>새 미팅 자료</Text>
+              <Pressable
+                style={styles.floatingButton}
+                onPress={handlePressNewDocument}
+                disabled={creatingDocument}
+                accessibilityRole="button">
+                {creatingDocument ? (
+                  <ActivityIndicator color="white" size="small" />
+                ) : (
+                  <Text style={styles.floatingButtonLabel}>새 미팅 자료</Text>
+                )}
               </Pressable>
             )}
           </View>
@@ -406,32 +392,30 @@ export function LeftSidePanel({ visible, onClose }: LeftSidePanelProps) {
               />
             </View>
           </View>
-        </Animated.View>
-      </View>
+        </KeyboardAvoidingView>
+      </Animated.View>
 
       <CreateProjectSheet
         visible={createProjectVisible}
         onClose={() => setCreateProjectVisible(false)}
-        onCreated={(project) => setProjects((prev) => [project, ...prev])}
+        onCreated={onProjectCreated}
       />
-
-      <UploadDocumentSheet
-        visible={uploadDocumentVisible}
-        onClose={() => setUploadDocumentVisible(false)}
-        onUploaded={(document) => setDocuments((prev) => [document, ...prev])}
-      />
-    </Modal>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  dim: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-  },
   panel: {
-    height: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'white',
+    elevation: 10,
+  },
+  panelKeyboardAvoider: {
+    flex: 1,
   },
   header: {
     height: 56,
@@ -444,14 +428,14 @@ const styles = StyleSheet.create({
     width: 91,
     height: 22,
   },
-  backButton: {
+  closeButton: {
     width: 32,
     height: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  backIcon: {
-    fontSize: 26,
+  closeIcon: {
+    fontSize: 20,
     color: Brand.textPrimary,
   },
   tabBar: {

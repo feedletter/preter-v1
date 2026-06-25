@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import {
   Animated,
@@ -5,6 +6,7 @@ import {
   Easing,
   KeyboardAvoidingView,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   StyleProp,
@@ -17,6 +19,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Brand } from '@/constants/theme';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
+// 이 거리(픽셀) 이상 아래로 끌거나, 그보다 적게 끌어도 빠르게 튕기듣 손을 떼면(velocity)
+// 닫힘으로 완료시킨다. 그 이하면 원래 위치로 스냅백.
+const CLOSE_DRAG_THRESHOLD = 120;
 
 type BottomSheetProps = {
   visible: boolean;
@@ -38,6 +43,7 @@ export function BottomSheet({ visible, onClose, children, sheetStyle }: BottomSh
   useEffect(() => {
     if (visible) {
       setMounted(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       Animated.parallel([
         Animated.timing(dimOpacity, {
           toValue: 1,
@@ -75,6 +81,31 @@ export function BottomSheet({ visible, onClose, children, sheetStyle }: BottomSh
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
+  // 핸들(상단 손잡이 바) 영역에서만 드래그를 가로챈다 — 시트 본문에 ScrollView가
+  // 들어있는 경우가 많아서, 본문 전체에 붙이면 스크롤 제스처와 충돌한다.
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        gesture.dy > 4 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.5,
+      onPanResponderMove: (_, gesture) => {
+        if (gesture.dy > 0) translateY.setValue(gesture.dy);
+      },
+      onPanResponderRelease: (_, gesture) => {
+        const shouldClose = gesture.dy > CLOSE_DRAG_THRESHOLD || gesture.vy > 0.8;
+        if (shouldClose) {
+          onClose();
+          return;
+        }
+        Animated.timing(translateY, {
+          toValue: 0,
+          duration: 200,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
+      },
+    }),
+  ).current;
+
   if (!mounted) return null;
 
   return (
@@ -89,14 +120,12 @@ export function BottomSheet({ visible, onClose, children, sheetStyle }: BottomSh
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={styles.keyboardAvoider}>
-            <Pressable
-              style={[styles.sheet, { paddingBottom: insets.bottom + 16 }, sheetStyle]}
-              onPress={(e) => e.stopPropagation()}>
-              <View style={styles.handleRow}>
+            <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }, sheetStyle]}>
+              <View style={styles.handleRow} {...panResponder.panHandlers}>
                 <View style={styles.handle} />
               </View>
               {children}
-            </Pressable>
+            </View>
           </KeyboardAvoidingView>
         </Animated.View>
       </View>
@@ -126,8 +155,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 12,
   },
+  // 실제로 보이는 손잡이 바(handle)는 작지만, 드래그를 받는 영역(handleRow)은
+  // 그보다 넉넉하게 키워서 손잡이 주변을 눌러도 스와이프 닫기가 시작되게 한다.
   handleRow: {
-    height: 16,
+    height: 32,
+    marginTop: -8,
+    marginBottom: -8,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -50,6 +50,21 @@ export async function createProject(name: string, description?: string): Promise
   return response.json();
 }
 
+// Create Meeting PRD 4.5 — 프로젝트 생성 화면(별도 페이지)에서 만든 프로젝트를
+// 이전 화면(미팅 생성 폼)으로 돌아왔을 때 자동 선택하기 위한 1회용 전달값.
+// 라우트 파라미터로는 화면 간 객체를 안전하게 주고받기 어려워 모듈 메모리로 전달한다.
+let pendingCreatedProject: Project | null = null;
+
+export function setPendingCreatedProject(project: Project): void {
+  pendingCreatedProject = project;
+}
+
+export function consumePendingCreatedProject(): Project | null {
+  const project = pendingCreatedProject;
+  pendingCreatedProject = null;
+  return project;
+}
+
 export type ProjectDetail = {
   id: string;
   name: string;

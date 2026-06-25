@@ -1,10 +1,10 @@
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { BottomSheet } from '@/components/bottom-sheet';
-import { UploadDocumentSheet } from '@/components/upload-document-sheet';
 import { Brand } from '@/constants/theme';
-import { Document, fetchDocuments } from '@/lib/documents';
+import { createDocument, Document, fetchDocuments } from '@/lib/documents';
 import { applyProjectDocument } from '@/lib/projects';
 
 type ProjectDocSheetProps = {
@@ -23,11 +23,12 @@ function formatDate(iso: string): string {
 
 // Project Detail PRD 5장 (SCR-PD-03/04/05) — 자료 추가 하프 바텀시트.
 export function ProjectDocSheet({ visible, projectId, onClose, onApplied }: ProjectDocSheetProps) {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
-  const [uploadVisible, setUploadVisible] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
@@ -44,8 +45,12 @@ export function ProjectDocSheet({ visible, projectId, onClose, onApplied }: Proj
     setApplying(true);
     try {
       await applyProjectDocument(projectId, selectedId);
-      onApplied();
       onClose();
+      // onApplied()는 project-detail 화면 전체를 다시 불러오는 무거운 refetch라,
+      // 닫힘 애니메이션(최대 280ms) 도중에 같이 발사되면 응답이 도착하는 시점에
+      // 화면 전체가 리렌더되며 애니메이션과 겹쳐 버벅인다. 애니메이션이 끝난
+      // 뒤에 시작하도록 지연시킨다.
+      setTimeout(onApplied, 280);
     } catch {
       Alert.alert('자료 적용에 실패했어요');
     } finally {
@@ -53,9 +58,18 @@ export function ProjectDocSheet({ visible, projectId, onClose, onApplied }: Proj
     }
   }
 
-  function handleUploaded(document: Document) {
-    setDocuments((prev) => [document, ...prev]);
-    setSelectedId(document.id);
+  async function handleCreateDocument() {
+    if (creating) return;
+    setCreating(true);
+    try {
+      const document = await createDocument();
+      onClose();
+      router.push({ pathname: '/doc-detail', params: { document_id: document.id } });
+    } catch {
+      Alert.alert('자료 생성에 실패했어요');
+    } finally {
+      setCreating(false);
+    }
   }
 
   const isEmpty = !loading && documents.length === 0;
@@ -107,9 +121,14 @@ export function ProjectDocSheet({ visible, projectId, onClose, onApplied }: Proj
 
         <Pressable
           style={styles.newDocButton}
-          onPress={() => setUploadVisible(true)}
+          onPress={handleCreateDocument}
+          disabled={creating}
           accessibilityRole="button">
-          <Text style={styles.newDocButtonLabel}>신규 자료 생성하기</Text>
+          {creating ? (
+            <ActivityIndicator color={Brand.primary} size="small" />
+          ) : (
+            <Text style={styles.newDocButtonLabel}>신규 자료 생성하기</Text>
+          )}
         </Pressable>
 
         <Pressable
@@ -124,12 +143,6 @@ export function ProjectDocSheet({ visible, projectId, onClose, onApplied }: Proj
           )}
         </Pressable>
       </BottomSheet>
-
-      <UploadDocumentSheet
-        visible={uploadVisible}
-        onClose={() => setUploadVisible(false)}
-        onUploaded={handleUploaded}
-      />
     </>
   );
 }

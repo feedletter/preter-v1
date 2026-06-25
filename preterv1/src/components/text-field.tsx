@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { useState } from 'react';
 import {
   KeyboardTypeOptions,
@@ -72,7 +73,10 @@ export function TextField({
           keyboardType={keyboardType}
           returnKeyType={returnKeyType}
           onSubmitEditing={onSubmitEditing}
-          onFocus={() => setFocused(true)}
+          onFocus={() => {
+            setFocused(true);
+            Haptics.selectionAsync();
+          }}
           onBlur={() => setFocused(false)}
         />
         {secureTextEntry && value.length > 0 && (

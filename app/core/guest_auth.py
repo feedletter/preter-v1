@@ -8,7 +8,6 @@ Guest는 Preter 계정(Supabase Auth)이 없는 임시 참가자라, auth_servic
 import uuid
 from datetime import datetime, timedelta, timezone
 
-import bcrypt
 import jwt
 
 from app.config import settings
@@ -46,11 +45,3 @@ def verify_guest_token(token: str) -> dict:
     except jwt.PyJWTError as exc:
         raise GuestAuthError(str(exc)) from exc
     return payload
-
-
-def hash_password(raw_password: str) -> str:
-    return bcrypt.hashpw(raw_password.encode(), bcrypt.gensalt(rounds=10)).decode()
-
-
-def verify_password(raw_password: str, password_hash: str) -> bool:
-    return bcrypt.checkpw(raw_password.encode(), password_hash.encode())

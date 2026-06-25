@@ -1,52 +1,123 @@
 import { Image } from 'expo-image';
 import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  Animated,
+  Dimensions,
+  Easing,
+  PanResponder,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BottomSheet } from '@/components/bottom-sheet';
 import { EditProfileSheet } from '@/components/edit-profile-sheet';
 import { LanguageSettingSheet, ProfileLanguage } from '@/components/language-setting-sheet';
 import { ReportIssueSheet } from '@/components/report-issue-sheet';
 import { Brand } from '@/constants/theme';
 import { logout } from '@/lib/auth';
-import { getMyPlan, getMyProfile, MyPlan, MyProfile, updateMyProfile } from '@/lib/users';
+import { MyPlan, MyProfile, updateMyProfile } from '@/lib/users';
 
 const HELP_CENTER_URL = 'https://docs.preter.me';
+const SCREEN_WIDTH = Dimensions.get('window').width;
+// 오른쪽 가장자리부터 끌어와서 닫는 제스처가 이 거리(화면 너비의 1/3)를 넘으면
+// 손을 떼도 계속 닫히는 방향으로 완료시킨다 (그 이하면 원위치로 스냅백).
+const CLOSE_DRAG_THRESHOLD = SCREEN_WIDTH / 3;
 
 type ProfileSheetProps = {
   visible: boolean;
   onClose: () => void;
-  /** 구독/정보 같은 풀스크린 페이지로 나갈 때 호출 — 돌아왔을 때 시트를 다시 열기 위함 */
+  /** 구독/정보 같은 풀스크린 페이지로 나갈 때 호출 — 돌아왔을 때 화면을 다시 열기 위함 */
   onNavigateAway: () => void;
+  profile: MyProfile | null;
+  plan: MyPlan | null;
+  onProfileChange: (profile: MyProfile) => void;
 };
 
 type LanguageSheetTarget = 'primary_language' | 'app_language' | null;
 
-export function ProfileSheet({ visible, onClose, onNavigateAway }: ProfileSheetProps) {
+// 프로필 화면을 바텀시트 위에 또 바텀시트(프로필 수정/언어/신고)를 띄우면 RN Modal이
+// 동시에 2개 떠서(특히 Android) 두 번째 Modal이 안 보이거나 닫은 뒤 첫 Modal이 터치를
+// 가로채는 문제가 있었다. 그래서 프로필 화면 자체는 Modal이 아닌 전면 화면 전환(우→좌
+// 슬라이드)으로 바꾼다 — 자식 시트(EditProfileSheet 등)가 뜰 때도 Modal이 항상 최대
+// 1개만 떠 있게 되어 구조적으로 해결된다.
+export function ProfileSheet({
+  visible,
+  onClose,
+  onNavigateAway,
+  profile,
+  plan,
+  onProfileChange,
+}: ProfileSheetProps) {
   const router = useRouter();
-  const [profile, setProfile] = useState<MyProfile | null>(null);
-  const [plan, setPlan] = useState<MyPlan | null>(null);
+  const insets = useSafeAreaInsets();
+  const [mounted, setMounted] = useState(visible);
   const [editVisible, setEditVisible] = useState(false);
   const [languageTarget, setLanguageTarget] = useState<LanguageSheetTarget>(null);
   const [reportVisible, setReportVisible] = useState(false);
+  const translateX = useRef(new Animated.Value(SCREEN_WIDTH)).current;
 
   useEffect(() => {
-    if (!visible) return;
-    getMyProfile().then(setProfile).catch(() => {});
-    getMyPlan().then(setPlan).catch(() => {});
-  }, [visible]);
+    if (visible) {
+      setMounted(true);
+      translateX.setValue(SCREEN_WIDTH);
+      Animated.timing(translateX, {
+        toValue: 0,
+        duration: 280,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.timing(translateX, {
+        toValue: SCREEN_WIDTH,
+        duration: 240,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (finished) setMounted(false);
+      });
+    }
+  }, [visible, translateX]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      // 좌→우로 끄는 제스처만 가로채고, 위아래 스크롤(ScrollView)은 그대로 둔다.
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        gesture.dx > 6 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+      onPanResponderMove: (_, gesture) => {
+        if (gesture.dx > 0) translateX.setValue(gesture.dx);
+      },
+      onPanResponderRelease: (_, gesture) => {
+        const shouldClose = gesture.dx > CLOSE_DRAG_THRESHOLD || gesture.vx > 0.8;
+        if (shouldClose) {
+          onClose();
+          return;
+        }
+        Animated.timing(translateX, {
+          toValue: 0,
+          duration: 200,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
+      },
+    }),
+  ).current;
 
   async function handleSaveName(name: string) {
     const updated = await updateMyProfile({ name });
-    setProfile(updated);
+    onProfileChange(updated);
     setEditVisible(false);
   }
 
   async function handleSelectLanguage(value: ProfileLanguage) {
     if (!languageTarget) return;
     const updated = await updateMyProfile({ [languageTarget]: value });
-    setProfile(updated);
+    onProfileChange(updated);
   }
 
   function handleLogout() {
@@ -80,11 +151,21 @@ export function ProfileSheet({ visible, onClose, onNavigateAway }: ProfileSheetP
     router.push('/profile-info');
   }
 
+  if (!mounted) return null;
+
   const initial = (profile?.name ?? '?').trim().charAt(0) || '?';
 
   return (
     <>
-      <BottomSheet visible={visible} onClose={onClose} sheetStyle={styles.sheet}>
+      <Animated.View
+        style={[styles.screen, { paddingTop: insets.top, transform: [{ translateX }] }]}
+        {...panResponder.panHandlers}>
+        <View style={styles.topRow}>
+          <Pressable onPress={onClose} hitSlop={8} accessibilityLabel="닫기" style={styles.closeButton}>
+            <Text style={styles.closeIcon}>✕</Text>
+          </Pressable>
+        </View>
+
         <View style={styles.profileHeader}>
           {profile?.avatar_url ? (
             <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
@@ -102,7 +183,10 @@ export function ProfileSheet({ visible, onClose, onNavigateAway }: ProfileSheetP
           </View>
         </View>
 
-        <ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.scrollContent}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
+          showsVerticalScrollIndicator={false}>
           <Text style={styles.sectionLabel}>계정</Text>
           <View style={styles.group}>
             <Pressable
@@ -174,7 +258,7 @@ export function ProfileSheet({ visible, onClose, onNavigateAway }: ProfileSheetP
           </Pressable>
           <Text style={styles.versionText}>Preter v1.0.0</Text>
         </ScrollView>
-      </BottomSheet>
+      </Animated.View>
 
       <EditProfileSheet
         visible={editVisible}
@@ -182,7 +266,7 @@ export function ProfileSheet({ visible, onClose, onNavigateAway }: ProfileSheetP
         email={profile?.email ?? null}
         avatarUrl={profile?.avatar_url ?? null}
         onSave={handleSaveName}
-        onAvatarUpdated={setProfile}
+        onAvatarUpdated={onProfileChange}
         onClose={() => setEditVisible(false)}
       />
 
@@ -223,14 +307,37 @@ function languageLabel(code: string | undefined): string {
 }
 
 const styles = StyleSheet.create({
-  sheet: {
-    height: '92%',
+  screen: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'white',
+    paddingHorizontal: 24,
+    elevation: 10,
+  },
+  topRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    height: 32,
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeIcon: {
+    fontSize: 20,
+    color: Brand.textPrimary,
   },
   profileHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 16,
-    height: 100,
+    height: 84,
+    marginTop: 8,
   },
   avatar: {
     width: 60,

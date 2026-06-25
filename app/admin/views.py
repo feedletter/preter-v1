@@ -118,10 +118,22 @@ class ProjectAdmin(ModelView, model=Project):
         Project.created_at,
         Project.deleted_at,
     ]
+    # 운영 케이스 4: 프로젝트 상세에서 등록된 미팅/자료/지시사항을 한 화면에서 확인.
+    column_details_list = [
+        Project.id,
+        Project.name,
+        Project.description,
+        Project.user,
+        Project.meeting_rooms,
+        Project.project_documents,
+        Project.instruction,
+        Project.created_at,
+        Project.deleted_at,
+    ]
     column_searchable_list = [Project.name]
     column_sortable_list = [Project.created_at]
     column_default_sort = [(Project.created_at, True)]
-    can_create = False
+    can_create = True
 
 
 class DocumentAdmin(ModelView, model=Document):
@@ -137,10 +149,23 @@ class DocumentAdmin(ModelView, model=Document):
         Document.created_at,
         Document.deleted_at,
     ]
+    # 운영 케이스 5: 자료 상세에서 메시지/통역 맥락/연결된 프로젝트·미팅을 한 화면에서 확인.
+    column_details_list = [
+        Document.id,
+        Document.title,
+        Document.user,
+        Document.file_url,
+        Document.messages,
+        Document.contexts,
+        Document.project_documents,
+        Document.meeting_rooms,
+        Document.created_at,
+        Document.deleted_at,
+    ]
     column_searchable_list = [Document.title]
     column_sortable_list = [Document.created_at]
     column_default_sort = [(Document.created_at, True)]
-    can_create = False
+    can_create = True
 
 
 class DocumentMessageAdmin(ModelView, model=DocumentMessage):
@@ -159,7 +184,8 @@ class DocumentMessageAdmin(ModelView, model=DocumentMessage):
     column_searchable_list = [DocumentMessage.file_name, DocumentMessage.content]
     column_sortable_list = [DocumentMessage.created_at]
     column_default_sort = [(DocumentMessage.created_at, True)]
-    can_create = False
+    column_filters = [DocumentMessage.status, DocumentMessage.type]
+    can_create = True
 
 
 class DocumentContextAdmin(ModelView, model=DocumentContext):
@@ -176,7 +202,8 @@ class DocumentContextAdmin(ModelView, model=DocumentContext):
     ]
     column_sortable_list = [DocumentContext.created_at]
     column_default_sort = [(DocumentContext.created_at, True)]
-    can_create = False
+    column_filters = [DocumentContext.language_hint, DocumentContext.priority]
+    can_create = True
 
 
 class ProjectDocumentAdmin(ModelView, model=ProjectDocument):
@@ -191,7 +218,7 @@ class ProjectDocumentAdmin(ModelView, model=ProjectDocument):
         ProjectDocument.applied_at,
     ]
     column_sortable_list = [ProjectDocument.applied_at]
-    can_create = False
+    can_create = True
 
 
 class ProjectInstructionAdmin(ModelView, model=ProjectInstruction):
@@ -206,7 +233,7 @@ class ProjectInstructionAdmin(ModelView, model=ProjectInstruction):
         ProjectInstruction.updated_at,
     ]
     column_sortable_list = [ProjectInstruction.updated_at]
-    can_create = False
+    can_create = True
 
 
 class MeetingRoomAdmin(ModelView, model=MeetingRoom):
@@ -226,13 +253,34 @@ class MeetingRoomAdmin(ModelView, model=MeetingRoom):
         MeetingRoom.ended_at,
         MeetingRoom.created_at,
     ]
+    # 운영 케이스 2: 미팅 상세에서 진행상황(상태/일정)·참가 인원·셋팅(프로젝트/자료/언어/정원)을
+    # 한 화면에서 확인. 평문 비밀번호는 여기서도 제외.
+    column_details_list = [
+        MeetingRoom.id,
+        MeetingRoom.room_code,
+        MeetingRoom.title,
+        MeetingRoom.host,
+        MeetingRoom.status,
+        MeetingRoom.primary_language,
+        MeetingRoom.max_participants,
+        MeetingRoom.project,
+        MeetingRoom.document,
+        MeetingRoom.participants,
+        MeetingRoom.scheduled_at,
+        MeetingRoom.started_at,
+        MeetingRoom.ended_at,
+        MeetingRoom.expires_at,
+        MeetingRoom.created_at,
+        MeetingRoom.deleted_at,
+    ]
     column_searchable_list = [MeetingRoom.room_code, MeetingRoom.title]
     column_sortable_list = [MeetingRoom.created_at, MeetingRoom.status]
     column_default_sort = [(MeetingRoom.created_at, True)]
-    # 비밀번호 해시는 운영자도 노출하지 않음
-    column_details_exclude_list = [MeetingRoom.password_hash]
-    column_list_exclude_list = [MeetingRoom.password_hash]
-    can_create = False
+    column_filters = [MeetingRoom.status, MeetingRoom.primary_language]
+    # 평문 비밀번호는 운영자에게도 노출하지 않음 (column_details_list에도 포함 안 시킴)
+    column_list_exclude_list = [MeetingRoom.password]
+    form_excluded_columns = [MeetingRoom.password]
+    can_create = True
 
 
 class MeetingParticipantAdmin(ModelView, model=MeetingParticipant):
@@ -246,12 +294,14 @@ class MeetingParticipantAdmin(ModelView, model=MeetingParticipant):
         MeetingParticipant.room,
         MeetingParticipant.role,
         MeetingParticipant.language,
+        MeetingParticipant.audio_enabled,
         MeetingParticipant.joined_at,
         MeetingParticipant.left_at,
         MeetingParticipant.is_kicked,
     ]
     column_sortable_list = [MeetingParticipant.joined_at]
-    can_create = False
+    column_filters = [MeetingParticipant.role, MeetingParticipant.is_kicked]
+    can_create = True
 
 
 class GuestSessionAdmin(ModelView, model=GuestSession):
@@ -260,21 +310,27 @@ class GuestSessionAdmin(ModelView, model=GuestSession):
     icon = "fa-solid fa-user-secret"
     category = "게스트 입장"
 
+    # 운영 케이스 1: 임시 게스트(룸/이메일/언어/접속 정보/요약 발송 여부) 관리.
     column_list = [
         GuestSession.display_name,
-        GuestSession.room_id,
+        GuestSession.room,
         GuestSession.email,
         GuestSession.language,
+        GuestSession.audio_enabled,
+        GuestSession.ip_address,
         GuestSession.joined_at,
         GuestSession.expires_at,
         GuestSession.summary_sent,
     ]
     column_sortable_list = [GuestSession.joined_at, GuestSession.expires_at]
-    # JWT 토큰 값은 탈취 위험으로 노출하지 않음
+    column_filters = [GuestSession.language, GuestSession.summary_sent]
+    column_searchable_list = [GuestSession.display_name, GuestSession.email]
+    # JWT 토큰 값은 탈취 위험으로 노출/입력 모두 막음 (생성 시 모델에서 자동 발급).
     column_details_exclude_list = [GuestSession.session_token]
     column_list_exclude_list = [GuestSession.session_token]
-    can_create = False
-    can_edit = False
+    form_excluded_columns = [GuestSession.session_token]
+    can_create = True
+    can_edit = True
 
 
 class MeetingSummaryAdmin(ModelView, model=MeetingSummary):
@@ -284,7 +340,7 @@ class MeetingSummaryAdmin(ModelView, model=MeetingSummary):
     category = "게스트 입장"
 
     column_list = [
-        MeetingSummary.room_id,
+        MeetingSummary.room,
         MeetingSummary.status,
         MeetingSummary.ai_model,
         MeetingSummary.processing_sec,
@@ -292,7 +348,8 @@ class MeetingSummaryAdmin(ModelView, model=MeetingSummary):
         MeetingSummary.completed_at,
     ]
     column_sortable_list = [MeetingSummary.created_at]
-    can_create = False
+    column_filters = [MeetingSummary.status]
+    can_create = True
 
 
 class ReportAdmin(ModelView, model=Report):
@@ -310,5 +367,8 @@ class ReportAdmin(ModelView, model=Report):
     ]
     column_sortable_list = [Report.created_at, Report.category]
     column_default_sort = [(Report.created_at, True)]
-    can_create = False
-    can_edit = False
+    # 운영 케이스 3: 카테고리로 필터링 + 내용(본문) 검색.
+    column_filters = [Report.category]
+    column_searchable_list = [Report.body]
+    can_create = True
+    can_edit = True

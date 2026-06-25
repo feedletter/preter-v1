@@ -7,10 +7,19 @@ type DeleteProjectModalProps = {
   visible: boolean;
   onClose: () => void;
   onConfirm: () => Promise<void>;
+  title?: string;
+  description?: string;
 };
 
-// Project Detail PRD 4장 (SCR-PD-09) — 프로젝트 삭제 확인 모달 (Popup/2 Button horizontal).
-export function DeleteProjectModal({ visible, onClose, onConfirm }: DeleteProjectModalProps) {
+// Project Detail PRD 4장 (SCR-PD-09) — 삭제 확인 모달 (Popup/2 Button horizontal).
+// Doc Detail PRD가 "동일 컴포넌트" 재사용을 명시 — title/description으로 일반화.
+export function DeleteProjectModal({
+  visible,
+  onClose,
+  onConfirm,
+  title = '프로젝트를 삭제할까요?',
+  description = '삭제된 프로젝트는 복구할 수 없어요.\n미팅 기록은 유지되지만 프로젝트 분류에서 제거됩니다.',
+}: DeleteProjectModalProps) {
   const [deleting, setDeleting] = useState(false);
   const scale = useRef(new Animated.Value(0.9)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -41,10 +50,8 @@ export function DeleteProjectModal({ visible, onClose, onConfirm }: DeleteProjec
       <View style={styles.dim} accessibilityViewIsModal>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <Animated.View style={[styles.card, { opacity, transform: [{ scale }] }]}>
-          <Text style={styles.title}>프로젝트를 삭제할까요?</Text>
-          <Text style={styles.description}>
-            삭제된 프로젝트는 복구할 수 없어요.{'\n'}미팅 기록은 유지되지만 프로젝트 분류에서 제거됩니다.
-          </Text>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.description}>{description}</Text>
           <View style={styles.buttonRow}>
             <Pressable style={styles.cancelButton} onPress={onClose} disabled={deleting}>
               <Text style={styles.cancelLabel}>취소</Text>

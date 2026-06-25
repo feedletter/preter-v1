@@ -38,7 +38,8 @@ def upload_avatar(user_id: str, content: bytes, content_type: str) -> str:
     bucket = _get_bucket()
     blob = bucket.blob(blob_path)
     blob.upload_from_string(content, content_type=content_type)
-    blob.make_public()
+    # 버킷이 Uniform bucket-level access라 객체별 ACL(make_public)은 거부된다 —
+    # 공개 읽기는 버킷 IAM(allUsers: objectViewer)에서 한 번에 처리한다.
 
     # PRD 9.4: 캐시 무효화를 위해 ?v={timestamp} 쿼리를 붙인다.
     return f"{blob.public_url}?v={timestamp}"
@@ -55,7 +56,8 @@ def upload_document(user_id: str, filename: str, content: bytes, content_type: s
     bucket = _get_bucket()
     blob = bucket.blob(blob_path)
     blob.upload_from_string(content, content_type=content_type)
-    blob.make_public()
+    # 버킷이 Uniform bucket-level access라 객체별 ACL(make_public)은 거부된다 —
+    # 공개 읽기는 버킷 IAM(allUsers: objectViewer)에서 한 번에 처리한다.
 
     return blob.public_url
 

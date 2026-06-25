@@ -34,6 +34,8 @@ export default function GuestMeetingInputScreen() {
   const [checking, setChecking] = useState(false);
   const [codeError, setCodeError] = useState(false);
   const [needsPassword, setNeedsPassword] = useState(false);
+  // Guest Live Session PRD 1.3 — validate 시점의 status로 입장 후 분기(즉시 라이브 vs 대기 화면).
+  const [roomStatus, setRoomStatus] = useState<string>('active');
 
   const [displayName, setDisplayName] = useState('');
   const [language, setLanguage] = useState<GuestLanguage>('ko');
@@ -88,6 +90,7 @@ export default function GuestMeetingInputScreen() {
     try {
       const result = await validateRoom(roomCode);
       setNeedsPassword(result.has_password);
+      setRoomStatus(result.status);
       setStep('details');
     } catch (err) {
       if (err instanceof GuestApiError) {
@@ -164,7 +167,7 @@ export default function GuestMeetingInputScreen() {
     setJoining(true);
     setPasswordError(false);
     try {
-      await joinRoom({
+      const result = await joinRoom({
         room_code: code,
         display_name: displayName.trim(),
         password: needsPassword ? password : undefined,
@@ -173,7 +176,18 @@ export default function GuestMeetingInputScreen() {
         audio_enabled: audioEnabled,
       });
       setShowEarphoneSheet(false);
-      router.replace('/main');
+      router.replace({
+        pathname: '/guest-live-session',
+        params: {
+          room_id: result.room_id,
+          room_code: code,
+          title: result.room_title ?? '미팅',
+          status: roomStatus,
+          my_name: displayName.trim(),
+          my_language: language,
+          password: needsPassword ? password : undefined,
+        },
+      });
     } catch (err) {
       if (err instanceof GuestApiError) {
         switch (err.code) {

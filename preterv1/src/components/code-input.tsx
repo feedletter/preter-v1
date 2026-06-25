@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { createRef, useRef } from 'react';
 import { StyleSheet, TextInput, View } from 'react-native';
 
@@ -62,6 +63,7 @@ export function CodeInput({ value, onChangeText, editable = true, hasError }: Co
           value={value[index] ?? ''}
           onChangeText={(text) => handleChangeDigit(index, text)}
           onKeyPress={({ nativeEvent }) => handleKeyPress(index, nativeEvent.key)}
+          onFocus={() => Haptics.selectionAsync()}
           keyboardType="number-pad"
           maxLength={index === 0 ? LENGTH : 1}
           editable={editable}

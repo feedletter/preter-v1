@@ -17,12 +17,14 @@ bearer_scheme = HTTPBearer()
 
 class MeetingResponse(BaseModel):
     id: str
+    room_code: str
     title: str | None
     status: str
     scheduled_at: str | None
     started_at: str | None
     ended_at: str | None
     language: str
+    is_host: bool
     project_id: str | None = None
     project_name: str | None = None
 
@@ -98,12 +100,13 @@ async def list_upcoming_meetings(
     # Host로 만든 미팅 + Member로 참가 중인 미팅을 합쳐서 보여준다.
     hosted = (
         client.table("meeting_rooms")
-        .select("id, title, status, scheduled_at, started_at, ended_at, primary_language")
+        .select("id, room_code, title, status, scheduled_at, started_at, ended_at, primary_language")
         .eq("host_user_id", user_id)
         .in_("status", ["waiting", "active"])
         .is_("deleted_at", "null")
         .execute()
     )
+    hosted_ids = {row["id"] for row in hosted.data}
 
     member_rooms = (
         client.table("meeting_participants")
@@ -118,7 +121,7 @@ async def list_upcoming_meetings(
     if member_room_ids:
         joined = (
             client.table("meeting_rooms")
-            .select("id, title, status, scheduled_at, started_at, ended_at, primary_language")
+            .select("id, room_code, title, status, scheduled_at, started_at, ended_at, primary_language")
             .in_("id", member_room_ids)
             .in_("status", ["waiting", "active"])
             .is_("deleted_at", "null")
@@ -135,12 +138,14 @@ async def list_upcoming_meetings(
     meetings = [
         MeetingResponse(
             id=row["id"],
+            room_code=row["room_code"],
             title=row["title"],
             status=row["status"],
             scheduled_at=row["scheduled_at"],
             started_at=row["started_at"],
             ended_at=row["ended_at"],
             language=row["primary_language"],
+            is_host=row["id"] in hosted_ids,
         )
         for row in rows
     ]

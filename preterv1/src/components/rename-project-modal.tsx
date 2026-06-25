@@ -17,12 +17,22 @@ type RenameProjectModalProps = {
   currentName: string;
   onClose: () => void;
   onConfirm: (name: string) => Promise<void>;
+  title?: string;
+  description?: string;
 };
 
 const NAME_MAX = 50;
 
-// Project Detail PRD 3장 (SCR-PD-08) — 프로젝트 이름 변경 중앙 모달 (Popup/input).
-export function RenameProjectModal({ visible, currentName, onClose, onConfirm }: RenameProjectModalProps) {
+// Project Detail PRD 3장 (SCR-PD-08) — 이름 변경 중앙 모달 (Popup/input).
+// Doc Detail PRD가 "동일 컴포넌트" 재사용을 명시 — title/description으로 일반화.
+export function RenameProjectModal({
+  visible,
+  currentName,
+  onClose,
+  onConfirm,
+  title = '프로젝트 이름 변경',
+  description = '새로운 프로젝트 이름을 입력해주세요',
+}: RenameProjectModalProps) {
   const [name, setName] = useState(currentName);
   const [saving, setSaving] = useState(false);
   const scale = useRef(new Animated.Value(0.9)).current;
@@ -57,8 +67,8 @@ export function RenameProjectModal({ visible, currentName, onClose, onConfirm }:
       <View style={styles.dim} accessibilityViewIsModal>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <Animated.View style={[styles.card, { opacity, transform: [{ scale }] }]}>
-          <Text style={styles.title}>프로젝트 이름 변경</Text>
-          <Text style={styles.description}>새로운 프로젝트 이름을 입력해주세요</Text>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.description}>{description}</Text>
           <TextInput
             value={name}
             onChangeText={(text) => setName(text.slice(0, NAME_MAX))}
