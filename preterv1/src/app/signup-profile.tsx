@@ -15,6 +15,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 const EXTRA_LIFT = Dimensions.get('window').height * 0.15;
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,23 +24,27 @@ import { SignupProgressBar } from '@/components/signup-progress-bar';
 import { TextField } from '@/components/text-field';
 import { Brand, Spacing } from '@/constants/theme';
 import { AuthApiError, signup } from '@/lib/auth';
+import { logEvent, setAnalyticsUser, setCrashUser } from '@/lib/firebase';
+import { resolveDeviceLanguage } from '@/lib/i18n';
 import { getSignupDraft, resetSignupDraft, updateSignupDraft } from '@/lib/signup-draft';
 
 const COUNTRY_CODES = [
-  { code: '+82', flag: '🇰🇷', name: '한국' },
-  { code: '+1', flag: '🇺🇸', name: '미국' },
-  { code: '+81', flag: '🇯🇵', name: '일본' },
-  { code: '+86', flag: '🇨🇳', name: '중국' },
-  { code: '+65', flag: '🇸🇬', name: '싱가포르' },
+  { code: '+82', flag: '🇰🇷', nameKey: 'signupProfile.countryKorea' },
+  { code: '+1', flag: '🇺🇸', nameKey: 'signupProfile.countryUs' },
+  { code: '+81', flag: '🇯🇵', nameKey: 'signupProfile.countryJapan' },
+  { code: '+86', flag: '🇨🇳', nameKey: 'signupProfile.countryChina' },
+  { code: '+65', flag: '🇸🇬', nameKey: 'signupProfile.countrySingapore' },
 ] as const;
 
 export default function SignupProfileScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const draft = getSignupDraft();
 
   const [countryCode, setCountryCode] = useState(draft.countryCode);
   const [phone, setPhone] = useState(draft.phone);
   const [companyEmail, setCompanyEmail] = useState(draft.companyEmail);
+  const [companyName, setCompanyName] = useState(draft.companyName);
   const [position, setPosition] = useState(draft.position);
   const [countryPickerOpen, setCountryPickerOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -51,10 +56,12 @@ export default function SignupProfileScreen() {
     if (!isValid || loading) return;
     setLoading(true);
     try {
-      updateSignupDraft({ phone, countryCode, companyEmail, position });
+      updateSignupDraft({ phone, countryCode, companyEmail, companyName, position });
       const finalDraft = getSignupDraft();
-      await signup({
+      const result = await signup({
         primary_language: finalDraft.primaryLanguage,
+        // 가입 시점 디바이스 로캘 → 앱 UI 언어 초기값 (정책 §2, 통역 언어와 별개).
+        app_language: resolveDeviceLanguage(),
         name: finalDraft.name,
         email: finalDraft.email,
         password: finalDraft.password,
@@ -62,16 +69,20 @@ export default function SignupProfileScreen() {
         country_code: finalDraft.countryCode,
         company_email: finalDraft.companyEmail || undefined,
         position: finalDraft.position || undefined,
+        company_name: finalDraft.companyName || undefined,
       });
+      setAnalyticsUser(result.user.id);
+      setCrashUser(result.user.id);
+      logEvent('sign_up', { method: 'email' });
       resetSignupDraft();
       router.replace('/main');
     } catch (err) {
       if (err instanceof AuthApiError && err.code === 'EMAIL_ALREADY_EXISTS') {
-        Alert.alert('이미 사용 중인 이메일이에요');
+        Alert.alert(t('signupProfile.emailTaken'));
       } else if (err instanceof AuthApiError && err.code === 'NETWORK_ERROR') {
-        Alert.alert('네트워크 연결을 확인해주세요');
+        Alert.alert(t('common.networkError'));
       } else {
-        Alert.alert('회원가입에 실패했어요. 잠시 후 다시 시도해주세요.');
+        Alert.alert(t('signupProfile.signupFailed'));
       }
     } finally {
       setLoading(false);
@@ -85,7 +96,7 @@ export default function SignupProfileScreen() {
         <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backButton}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
-        <Text style={styles.topBarTitle}>회원가입</Text>
+        <Text style={styles.topBarTitle}>{t('signupProfile.topBarTitle')}</Text>
       </View>
 
       <SignupProgressBar step={3} total={3} />
@@ -98,7 +109,7 @@ export default function SignupProfileScreen() {
         keyboardShouldPersistTaps="handled">
         <View style={styles.phoneField}>
           <View style={styles.phoneLabelRow}>
-            <Text style={styles.label}>휴대폰 번호</Text>
+            <Text style={styles.label}>{t('signupProfile.phoneLabel')}</Text>
             <View style={styles.requiredDot} />
           </View>
           <View style={styles.phoneRow}>
@@ -114,12 +125,12 @@ export default function SignupProfileScreen() {
               style={styles.phoneInput}
               value={phone}
               onChangeText={setPhone}
-              placeholder="010-1234-5678"
+              placeholder={t('signupProfile.phonePlaceholder')}
               placeholderTextColor={Brand.textDisabled}
               keyboardType="number-pad"
             />
           </View>
-          <Text style={styles.helperText}>하이픈(-) 없이 숫자만 입력해주세요</Text>
+          <Text style={styles.helperText}>{t('signupProfile.phoneHelper')}</Text>
 
           {countryPickerOpen && (
             <View style={styles.countryOptions}>
@@ -132,7 +143,7 @@ export default function SignupProfileScreen() {
                     setCountryPickerOpen(false);
                   }}>
                   <Text style={styles.flag}>{c.flag}</Text>
-                  <Text style={styles.countryOptionLabel}>{c.name}</Text>
+                  <Text style={styles.countryOptionLabel}>{t(c.nameKey)}</Text>
                   <Text style={styles.countryOptionCode}>{c.code}</Text>
                 </Pressable>
               ))}
@@ -142,19 +153,26 @@ export default function SignupProfileScreen() {
 
         <View style={styles.fields}>
           <TextField
-            label="회사 이메일"
+            label={t('signupProfile.companyEmailLabel')}
             value={companyEmail}
             onChangeText={setCompanyEmail}
-            placeholder="회사 이메일을 입력해주세요"
+            placeholder={t('signupProfile.companyEmailPlaceholder')}
             keyboardType="email-address"
-            helperText="회사 이메일은 선택 항목이에요"
+            helperText={t('signupProfile.companyEmailHelper')}
           />
           <TextField
-            label="회사 직책"
+            label={t('signupProfile.companyNameLabel')}
+            value={companyName}
+            onChangeText={setCompanyName}
+            placeholder={t('signupProfile.companyNamePlaceholder')}
+            helperText={t('signupProfile.companyNameHelper')}
+          />
+          <TextField
+            label={t('signupProfile.positionLabel')}
             value={position}
             onChangeText={setPosition}
-            placeholder="직책을 입력해주세요"
-            helperText="명함에서 인식된 직책을 확인해주세요"
+            placeholder={t('signupProfile.positionPlaceholder')}
+            helperText={t('signupProfile.positionHelper')}
           />
         </View>
       </ScrollView>
@@ -167,7 +185,7 @@ export default function SignupProfileScreen() {
           {loading ? (
             <ActivityIndicator color="white" />
           ) : (
-            <Text style={styles.completeButtonLabel}>회원가입 완료</Text>
+            <Text style={styles.completeButtonLabel}>{t('signupProfile.completeButton')}</Text>
           )}
         </Pressable>
       </View>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { BottomSheet } from '@/components/bottom-sheet';
 import { Brand } from '@/constants/theme';
@@ -22,6 +23,7 @@ function formatDateTime(iso: string): string {
 
 // Doc Detail PRD 6장 (SCR-D-05) — 학습된 자료 보기 바텀시트. 열릴 때마다 최신 상태로 재조회.
 export function DocumentContextSheet({ visible, documentId, onClose }: DocumentContextSheetProps) {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [contexts, setContexts] = useState<DocumentContext[]>([]);
 
@@ -37,8 +39,8 @@ export function DocumentContextSheet({ visible, documentId, onClose }: DocumentC
   return (
     <BottomSheet visible={visible} onClose={onClose} sheetStyle={styles.sheet}>
       <View style={styles.header}>
-        <Text style={styles.title}>학습된 자료</Text>
-        <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button" accessibilityLabel="닫기">
+        <Text style={styles.title}>{t('documentContextSheet.title')}</Text>
+        <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('documentContextSheet.close')}>
           <Text style={styles.closeIcon}>×</Text>
         </Pressable>
       </View>
@@ -49,7 +51,7 @@ export function DocumentContextSheet({ visible, documentId, onClose }: DocumentC
         </View>
       ) : contexts.length === 0 ? (
         <View style={styles.centerMessage}>
-          <Text style={styles.emptyText}>아직 학습된 내용이 없어요</Text>
+          <Text style={styles.emptyText}>{t('documentContextSheet.empty')}</Text>
         </View>
       ) : (
         <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
@@ -57,7 +59,7 @@ export function DocumentContextSheet({ visible, documentId, onClose }: DocumentC
             <View key={ctx.id} style={styles.ctxBlock}>
               <View style={styles.ctxHeader}>
                 <View style={[styles.typeBadge, ctx.priority ? styles.typeBadgeText : styles.typeBadgeFile]}>
-                  <Text style={styles.typeBadgeLabel}>{ctx.priority ? '📝 텍스트' : '📎 파일'}</Text>
+                  <Text style={styles.typeBadgeLabel}>{ctx.priority ? t('documentContextSheet.typeText') : t('documentContextSheet.typeFile')}</Text>
                 </View>
                 <Text style={styles.ctxTimestamp}>{formatDateTime(ctx.created_at)}</Text>
               </View>
@@ -67,7 +69,7 @@ export function DocumentContextSheet({ visible, documentId, onClose }: DocumentC
                 </Text>
               ))}
               {ctx.technical_terms && ctx.technical_terms.length > 0 && (
-                <Text style={styles.termsText}>용어: {ctx.technical_terms.join(', ')}</Text>
+                <Text style={styles.termsText}>{t('documentContextSheet.terms', { terms: ctx.technical_terms.join(', ') })}</Text>
               )}
             </View>
           ))}

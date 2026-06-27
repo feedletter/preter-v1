@@ -1,3 +1,4 @@
+import asyncio
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -50,6 +51,9 @@ class SignupRequest(BaseModel):
     name: str
     email: str
     password: str
+    # 가입 시점 디바이스 로캘로 결정된 앱 UI 언어 (통역 언어인 primary_language와 별개).
+    # 프론트가 안 보내면 DB 컬럼 기본값('ko')으로 남는다.
+    app_language: str | None = None
     # Step 3 (선택)
     phone: str | None = None
     country_code: str = "+82"
@@ -93,6 +97,7 @@ class SnsLoginRequest(BaseModel):
 class SnsCompleteRequest(BaseModel):
     primary_language: str
     name: str
+    app_language: str | None = None
 
 
 class RefreshRequest(BaseModel):
@@ -112,7 +117,7 @@ async def login(body: LoginRequest):
     except auth_service.AuthError:
         raise HTTPException(status_code=401, detail={"error": "INVALID_CREDENTIALS"})
 
-    user_summary = _fetch_user_summary(result["user"]["id"])
+    user_summary = await asyncio.to_thread(_fetch_user_summary, result["user"]["id"])
     return TokenResponse(
         access_token=result["access_token"],
         refresh_token=result["refresh_token"],
@@ -125,8 +130,13 @@ async def check_email(email: str):
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail={"error": "INVALID_EMAIL_FORMAT"})
 
+    available = await asyncio.to_thread(_check_email_available, email)
+    return EmailAvailabilityResponse(available=available)
+
+
+def _check_email_available(email: str) -> bool:
     existing = get_client().table("users").select("id").eq("email", email).execute()
-    return EmailAvailabilityResponse(available=len(existing.data) == 0)
+    return len(existing.data) == 0
 
 
 @router.post("/signup", response_model=TokenResponse)
@@ -139,24 +149,30 @@ async def signup(body: SignupRequest):
         raise HTTPException(status_code=400, detail={"error": exc.code})
 
     user_id = result["user"]["id"]
-    get_client().table("users").update(
-        {
-            "primary_language": body.primary_language,
-            "phone": body.phone,
-            "country_code": body.country_code,
-            "company_email": body.company_email,
-            "position": body.position,
-            "company_name": body.company_name,
-            "is_onboarded": True,
-        }
-    ).eq("id", user_id).execute()
-
-    user_summary = _fetch_user_summary(user_id)
+    user_summary = await asyncio.to_thread(_finish_signup_profile, user_id, body)
     return TokenResponse(
         access_token=result["access_token"],
         refresh_token=result["refresh_token"],
         user=user_summary,
     )
+
+
+def _finish_signup_profile(user_id: str, body: SignupRequest) -> dict:
+    update_fields = {
+        "primary_language": body.primary_language,
+        "phone": body.phone,
+        "country_code": body.country_code,
+        "company_email": body.company_email,
+        "position": body.position,
+        "company_name": body.company_name,
+        "is_onboarded": True,
+    }
+    if body.app_language:
+        update_fields["app_language"] = body.app_language
+
+    get_client().table("users").update(update_fields).eq("id", user_id).execute()
+
+    return _fetch_user_summary(user_id)
 
 
 @router.post("/sns", response_model=TokenResponse)
@@ -166,7 +182,7 @@ async def sns_login(body: SnsLoginRequest):
     except auth_service.AuthError:
         raise HTTPException(status_code=401, detail={"error": "SNS_LOGIN_FAILED"})
 
-    user_summary = _fetch_user_summary(result["user"]["id"])
+    user_summary = await asyncio.to_thread(_fetch_user_summary, result["user"]["id"])
     return TokenResponse(
         access_token=result["access_token"],
         refresh_token=result["refresh_token"],
@@ -184,20 +200,26 @@ async def sns_complete(
         raise HTTPException(status_code=401, detail={"error": "INVALID_TOKEN"})
 
     user_id = user["id"]
-    get_client().table("users").update(
-        {
-            "primary_language": body.primary_language,
-            "name": body.name,
-            "is_onboarded": True,
-        }
-    ).eq("id", user_id).execute()
-
-    user_summary = _fetch_user_summary(user_id)
+    user_summary = await asyncio.to_thread(_finish_sns_signup_profile, user_id, body)
     return TokenResponse(
         access_token=credentials.credentials,
         refresh_token="",
         user=user_summary,
     )
+
+
+def _finish_sns_signup_profile(user_id: str, body: SnsCompleteRequest) -> dict:
+    update_fields = {
+        "primary_language": body.primary_language,
+        "name": body.name,
+        "is_onboarded": True,
+    }
+    if body.app_language:
+        update_fields["app_language"] = body.app_language
+
+    get_client().table("users").update(update_fields).eq("id", user_id).execute()
+
+    return _fetch_user_summary(user_id)
 
 
 class MeResponse(BaseModel):
@@ -213,7 +235,8 @@ async def me(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme))
     except auth_service.AuthError:
         raise HTTPException(status_code=401, detail={"error": "INVALID_TOKEN"})
 
-    return MeResponse(user=_fetch_user_summary(user["id"]))
+    user_summary = await asyncio.to_thread(_fetch_user_summary, user["id"])
+    return MeResponse(user=user_summary)
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -223,7 +246,7 @@ async def refresh(body: RefreshRequest):
     except auth_service.AuthError:
         raise HTTPException(status_code=401, detail={"error": "INVALID_REFRESH_TOKEN"})
 
-    user_summary = _fetch_user_summary(result["user"]["id"])
+    user_summary = await asyncio.to_thread(_fetch_user_summary, result["user"]["id"])
     return TokenResponse(
         access_token=result["access_token"],
         refresh_token=result["refresh_token"],

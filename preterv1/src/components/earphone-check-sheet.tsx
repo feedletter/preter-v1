@@ -1,4 +1,5 @@
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Brand, Spacing } from '@/constants/theme';
@@ -19,6 +20,7 @@ export function EarphoneCheckSheet({
   joining,
   countdownText,
 }: EarphoneCheckSheetProps) {
+  const { t } = useTranslation();
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={onCancel}>
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -26,26 +28,23 @@ export function EarphoneCheckSheet({
           <Pressable onPress={onCancel} hitSlop={8} style={styles.backButton}>
             <Text style={styles.backIcon}>‹</Text>
           </Pressable>
-          <Text style={styles.topBarTitle}>미팅룸 참가</Text>
+          <Text style={styles.topBarTitle}>{t('earphoneCheckSheet.topBarTitle')}</Text>
         </View>
 
         <View style={styles.content}>
           <Text style={styles.illustration}>🎧</Text>
-          <Text style={styles.title}>이어폰이 연결되어 있나요?</Text>
-          <Text style={styles.description}>
-            정확한 동시통역 음성을 듣고 말하기 위해, 미팅 참가 전 이어폰을 착용하고 연결 상태를
-            확인해주세요.
-          </Text>
+          <Text style={styles.title}>{t('earphoneCheckSheet.title')}</Text>
+          <Text style={styles.description}>{t('earphoneCheckSheet.description')}</Text>
 
           <View style={styles.statusCard}>
             <View style={styles.statusDot} />
-            <Text style={styles.statusText}>이어폰 연결 상태는 입장 후 확인할 수 있어요</Text>
+            <Text style={styles.statusText}>{t('earphoneCheckSheet.statusText')}</Text>
           </View>
 
           {countdownText && (
             <View style={styles.countdownCard}>
               <Text style={styles.countdownText}>{countdownText}</Text>
-              <Text style={styles.countdownSubtext}>시작 시간이 되면 자동으로 다시 참가를 시도해요</Text>
+              <Text style={styles.countdownSubtext}>{t('earphoneCheckSheet.countdownSubtext')}</Text>
             </View>
           )}
         </View>
@@ -56,7 +55,11 @@ export function EarphoneCheckSheet({
             disabled={joining || !!countdownText}
             style={[styles.joinButton, !!countdownText && styles.joinButtonDisabled]}>
             <Text style={styles.joinButtonLabel}>
-              {countdownText ? '시작 시간까지 대기 중' : joining ? '참가 중...' : '미팅 참가하기'}
+              {countdownText
+                ? t('earphoneCheckSheet.waitingForStart')
+                : joining
+                  ? t('earphoneCheckSheet.joining')
+                  : t('earphoneCheckSheet.joinButton')}
             </Text>
           </Pressable>
         </View>

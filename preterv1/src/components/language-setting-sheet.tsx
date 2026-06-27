@@ -5,7 +5,12 @@ import { Brand } from '@/constants/theme';
 
 export type ProfileLanguage = 'ko' | 'en' | 'ja' | 'zh' | 'sg';
 
-const LANGUAGES: { code: ProfileLanguage; label: string; flag: string }[] = [
+type LanguageOption = { code: ProfileLanguage; label: string; flag: string };
+
+// 통역 언어(SCR-P-04)는 5개 모두 지원하지만, 앱 서비스 언어(SCR-P-05)는 실제 번역 리소스가
+// 있는 ko/en/ja만 골라 쓸 수 있어야 한다 — zh/sg를 고르면 UI가 안 바뀌는 채로 DB값만
+// 저장되는 모순이 생기므로 호출부에서 languageOptions로 제한해서 넘긴다.
+const ALL_LANGUAGES: LanguageOption[] = [
   { code: 'ko', label: '한국어', flag: '🇰🇷' },
   { code: 'en', label: 'English', flag: '🇺🇸' },
   { code: 'ja', label: '日本語', flag: '🇯🇵' },
@@ -20,6 +25,7 @@ type LanguageSettingSheetProps = {
   value: ProfileLanguage;
   onSelect: (value: ProfileLanguage) => void;
   onClose: () => void;
+  languageOptions?: ProfileLanguage[];
 };
 
 // Profile PRD 5.1/5.3: 통역 언어(SCR-P-04)와 앱 서비스 언어(SCR-P-05)가 같은 하프 바텀시트를 공유한다.
@@ -30,7 +36,12 @@ export function LanguageSettingSheet({
   value,
   onSelect,
   onClose,
+  languageOptions,
 }: LanguageSettingSheetProps) {
+  const languages = languageOptions
+    ? ALL_LANGUAGES.filter((lang) => languageOptions.includes(lang.code))
+    : ALL_LANGUAGES;
+
   return (
     <BottomSheet visible={visible} onClose={onClose} sheetStyle={styles.sheet}>
       <View style={styles.header}>
@@ -42,7 +53,7 @@ export function LanguageSettingSheet({
       <Text style={styles.description}>{description}</Text>
 
       <View style={styles.list}>
-        {LANGUAGES.map((lang) => {
+        {languages.map((lang) => {
           const selected = lang.code === value;
           return (
             <Pressable

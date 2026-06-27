@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { BottomSheet } from '@/components/bottom-sheet';
 import { Brand } from '@/constants/theme';
@@ -16,6 +17,7 @@ const DESCRIPTION_MAX = 200;
 
 // LeftSide PRD 6장 (SCR-L-05/06) — 프로젝트 생성 바텀시트.
 export function CreateProjectSheet({ visible, onClose, onCreated }: CreateProjectSheetProps) {
+  const { t } = useTranslation();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
@@ -37,7 +39,7 @@ export function CreateProjectSheet({ visible, onClose, onCreated }: CreateProjec
       onCreated(project);
       onClose();
     } catch {
-      Alert.alert('프로젝트 생성에 실패했어요. 다시 시도해주세요');
+      Alert.alert(t('createProjectSheet.createFailed'));
     } finally {
       setSaving(false);
     }
@@ -46,24 +48,24 @@ export function CreateProjectSheet({ visible, onClose, onCreated }: CreateProjec
   return (
     <BottomSheet visible={visible} onClose={onClose} sheetStyle={styles.sheet}>
       <View style={styles.header}>
-        <Text style={styles.title}>프로젝트 생성</Text>
+        <Text style={styles.title}>{t('createProjectSheet.title')}</Text>
         <Pressable
           onPress={handleConfirm}
           disabled={!isValid || saving}
           style={[styles.confirmButton, !isValid && styles.confirmButtonDisabled]}
           accessibilityRole="button"
-          accessibilityLabel="프로젝트 생성 확인">
+          accessibilityLabel={t('createProjectSheet.confirmAccessibilityLabel')}>
           {saving ? <ActivityIndicator color="white" size="small" /> : <Text style={styles.confirmIcon}>✓</Text>}
         </Pressable>
       </View>
-      <Text style={styles.guideText}>같은 업무에 대한 미팅은 프로젝트로 관리하세요</Text>
+      <Text style={styles.guideText}>{t('createProjectSheet.guideText')}</Text>
 
       <View style={styles.field}>
-        <Text style={styles.label}>무엇을 작업하고 계신가요?</Text>
+        <Text style={styles.label}>{t('createProjectSheet.nameQuestion')}</Text>
         <TextInput
           value={name}
           onChangeText={(text) => setName(text.slice(0, NAME_MAX))}
-          placeholder="프로젝트 이름"
+          placeholder={t('createProjectSheet.namePlaceholder')}
           placeholderTextColor={Brand.textDisabled}
           style={styles.nameInput}
           maxLength={NAME_MAX}
@@ -72,11 +74,11 @@ export function CreateProjectSheet({ visible, onClose, onCreated }: CreateProjec
       </View>
 
       <View style={styles.field}>
-        <Text style={styles.label}>무엇을 이루고자 하시나요?</Text>
+        <Text style={styles.label}>{t('createProjectSheet.descriptionQuestion')}</Text>
         <TextInput
           value={description}
           onChangeText={(text) => setDescription(text.slice(0, DESCRIPTION_MAX))}
-          placeholder="프로젝트, 목표, 주제 등을 설명해 주세요..."
+          placeholder={t('createProjectSheet.descriptionPlaceholder')}
           placeholderTextColor={Brand.textDisabled}
           style={styles.descriptionInput}
           multiline

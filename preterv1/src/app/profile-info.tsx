@@ -4,17 +4,23 @@ import { StatusBar } from 'expo-status-bar';
 import * as WebBrowser from 'expo-web-browser';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 
 import { Brand, Spacing } from '@/constants/theme';
 
-const LEGAL_LINKS = [
-  { label: '이용약관', url: 'https://preter.me/terms' },
-  { label: '개인정보 취급방침', url: 'https://preter.me/privacy' },
+const LEGAL_LINK_URLS = [
+  { key: 'terms', url: 'https://preter.me/terms' },
+  { key: 'privacy', url: 'https://preter.me/privacy' },
 ] as const;
 
 // Profile PRD 7장 (SCR-P-07) — 이용약관/개인정보처리방침 등 법적고지 + 앱 버전 표시.
 export default function ProfileInfoScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
+  const LEGAL_LINKS = LEGAL_LINK_URLS.map((item) => ({
+    label: t(`profileInfo.legal_${item.key}`),
+    url: item.url,
+  }));
   const version = Constants.expoConfig?.version ?? '1.0.0';
   const buildNumber =
     Constants.expoConfig?.ios?.buildNumber ?? Constants.expoConfig?.android?.versionCode ?? '100';
@@ -26,7 +32,7 @@ export default function ProfileInfoScreen() {
         <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backButton}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
-        <Text style={styles.topBarTitle}>정보</Text>
+        <Text style={styles.topBarTitle}>{t('profileInfo.title')}</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
@@ -46,15 +52,15 @@ export default function ProfileInfoScreen() {
           <View style={styles.divider} />
           <Pressable
             style={styles.row}
-            onPress={() => Alert.alert('오픈소스 라이선스는 준비 중이에요')}
+            onPress={() => Alert.alert(t('profileInfo.openSourceComingSoon'))}
             accessibilityRole="button">
-            <Text style={styles.rowLabel}>오픈소스 라이선스</Text>
+            <Text style={styles.rowLabel}>{t('profileInfo.openSourceLicense')}</Text>
             <Text style={styles.arrowIcon}>›</Text>
           </Pressable>
         </View>
 
         <View style={styles.versionCard}>
-          <Text style={styles.versionLabel}>앱 버전</Text>
+          <Text style={styles.versionLabel}>{t('profileInfo.appVersion')}</Text>
           <Text style={styles.versionValue}>
             v{version} (Build {buildNumber})
           </Text>

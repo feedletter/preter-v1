@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { Brand } from '@/constants/theme';
 
@@ -17,9 +18,12 @@ export function DeleteProjectModal({
   visible,
   onClose,
   onConfirm,
-  title = '프로젝트를 삭제할까요?',
-  description = '삭제된 프로젝트는 복구할 수 없어요.\n미팅 기록은 유지되지만 프로젝트 분류에서 제거됩니다.',
+  title,
+  description,
 }: DeleteProjectModalProps) {
+  const { t } = useTranslation();
+  const resolvedTitle = title ?? t('deleteProjectModal.title');
+  const resolvedDescription = description ?? t('deleteProjectModal.description');
   const [deleting, setDeleting] = useState(false);
   const scale = useRef(new Animated.Value(0.9)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -50,14 +54,14 @@ export function DeleteProjectModal({
       <View style={styles.dim} accessibilityViewIsModal>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <Animated.View style={[styles.card, { opacity, transform: [{ scale }] }]}>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.description}>{description}</Text>
+          <Text style={styles.title}>{resolvedTitle}</Text>
+          <Text style={styles.description}>{resolvedDescription}</Text>
           <View style={styles.buttonRow}>
             <Pressable style={styles.cancelButton} onPress={onClose} disabled={deleting}>
-              <Text style={styles.cancelLabel}>취소</Text>
+              <Text style={styles.cancelLabel}>{t('common.cancel')}</Text>
             </Pressable>
             <Pressable style={styles.deleteButton} onPress={handleConfirm} disabled={deleting}>
-              {deleting ? <ActivityIndicator color={Brand.error} size="small" /> : <Text style={styles.deleteLabel}>삭제하기</Text>}
+              {deleting ? <ActivityIndicator color={Brand.error} size="small" /> : <Text style={styles.deleteLabel}>{t('deleteProjectModal.deleteButton')}</Text>}
             </Pressable>
           </View>
         </Animated.View>

@@ -2,6 +2,8 @@ import * as Linking from 'expo-linking';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 
+import { resolveDeviceLanguage } from '@/lib/i18n';
+
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 
@@ -63,6 +65,7 @@ export async function login(email: string, password: string): Promise<TokenRespo
 
 export type SignupPayload = {
   primary_language: string;
+  app_language?: string;
   name: string;
   email: string;
   password: string;
@@ -210,7 +213,11 @@ export async function completeSnsSignup(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ primary_language: primaryLanguage, name }),
+      body: JSON.stringify({
+        primary_language: primaryLanguage,
+        name,
+        app_language: resolveDeviceLanguage(),
+      }),
     });
   } catch {
     throw new AuthApiError('NETWORK_ERROR');

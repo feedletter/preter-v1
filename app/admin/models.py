@@ -367,3 +367,26 @@ class Report(Base):
 
     def __str__(self) -> str:
         return f"{self.category}: {self.body[:30]}"
+
+
+class AiUsageLog(Base):
+    __tablename__ = "ai_usage_logs"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    provider: Mapped[str]
+    model: Mapped[str]
+    input_tokens: Mapped[int]
+    output_tokens: Mapped[int]
+    cost_usd: Mapped[float] = mapped_column(Numeric(12, 6))
+    context: Mapped[str | None]
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.documents.id")
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.document_messages.id")
+    )
+    created_at: Mapped[datetime]
+
+    def __str__(self) -> str:
+        return f"{self.provider}:{self.model} ${self.cost_usd}"

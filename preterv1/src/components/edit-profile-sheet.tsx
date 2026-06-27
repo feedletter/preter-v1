@@ -3,6 +3,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { BottomSheet } from '@/components/bottom-sheet';
 import { TextField } from '@/components/text-field';
@@ -29,6 +30,7 @@ export function EditProfileSheet({
   onAvatarUpdated,
   onClose,
 }: EditProfileSheetProps) {
+  const { t } = useTranslation();
   const [name, setName] = useState(currentName);
   const [saving, setSaving] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -42,9 +44,9 @@ export function EditProfileSheet({
 
   function handleClose() {
     if (isDirty) {
-      Alert.alert('변경사항을 저장하지 않고 닫을까요?', undefined, [
-        { text: '취소', style: 'cancel' },
-        { text: '닫기', style: 'destructive', onPress: onClose },
+      Alert.alert(t('editProfileSheet.discardConfirm'), undefined, [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('editProfileSheet.discardClose'), style: 'destructive', onPress: onClose },
       ]);
       return;
     }
@@ -57,7 +59,7 @@ export function EditProfileSheet({
     try {
       await onSave(name.trim());
     } catch {
-      Alert.alert('프로필 수정에 실패했어요. 잠시 후 다시 시도해주세요.');
+      Alert.alert(t('editProfileSheet.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -75,7 +77,7 @@ export function EditProfileSheet({
       const updated = await uploadMyAvatar(resized.uri, 'image/jpeg');
       onAvatarUpdated(updated);
     } catch {
-      Alert.alert('프로필 사진 업로드에 실패했어요. 잠시 후 다시 시도해주세요.');
+      Alert.alert(t('editProfileSheet.avatarUploadFailed'));
     } finally {
       setAvatarBusy(false);
     }
@@ -84,7 +86,7 @@ export function EditProfileSheet({
   async function handleTakePhoto() {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('카메라 권한이 필요해요', '설정에서 카메라 접근을 허용해주세요.');
+      Alert.alert(t('editProfileSheet.cameraPermissionTitle'), t('editProfileSheet.cameraPermissionBody'));
       return;
     }
     const result = await ImagePicker.launchCameraAsync({ quality: 0.9, allowsEditing: true });
@@ -95,7 +97,7 @@ export function EditProfileSheet({
   async function handlePickFromGallery() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('사진 라이브러리 권한이 필요해요', '설정에서 사진 접근을 허용해주세요.');
+      Alert.alert(t('editProfileSheet.libraryPermissionTitle'), t('editProfileSheet.libraryPermissionBody'));
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -114,7 +116,7 @@ export function EditProfileSheet({
       const updated = await deleteMyAvatar();
       onAvatarUpdated(updated);
     } catch {
-      Alert.alert('프로필 사진 삭제에 실패했어요. 잠시 후 다시 시도해주세요.');
+      Alert.alert(t('editProfileSheet.avatarDeleteFailed'));
     } finally {
       setAvatarBusy(false);
     }
@@ -122,7 +124,7 @@ export function EditProfileSheet({
 
   return (
     <BottomSheet visible={visible} onClose={handleClose} sheetStyle={styles.sheet}>
-      <Text style={styles.title}>프로필 수정</Text>
+      <Text style={styles.title}>{t('editProfileSheet.title')}</Text>
 
       <View style={styles.avatarSection}>
         <View style={styles.avatarWrap}>
@@ -148,17 +150,17 @@ export function EditProfileSheet({
             style={styles.avatarActionButton}
             onPress={handleTakePhoto}
             disabled={avatarBusy}>
-            <Text style={styles.avatarActionLabel}>📷 새 사진 찍기</Text>
+            <Text style={styles.avatarActionLabel}>📷 {t('editProfileSheet.takePhoto')}</Text>
           </Pressable>
           <Pressable
             style={styles.avatarActionButton}
             onPress={handlePickFromGallery}
             disabled={avatarBusy}>
-            <Text style={styles.avatarActionLabel}>🖼 갤러리에서 선택</Text>
+            <Text style={styles.avatarActionLabel}>🖼 {t('editProfileSheet.pickFromGallery')}</Text>
           </Pressable>
           {avatarUrl && (
             <Pressable onPress={handleRemoveAvatar} disabled={avatarBusy} hitSlop={8}>
-              <Text style={styles.removeLink}>현재 사진 제거</Text>
+              <Text style={styles.removeLink}>{t('editProfileSheet.removePhoto')}</Text>
             </Pressable>
           )}
         </View>
@@ -166,20 +168,20 @@ export function EditProfileSheet({
 
       <View style={styles.fields}>
         <TextField
-          label="이름"
+          label={t('editProfileSheet.nameLabel')}
           required
           value={name}
           onChangeText={setName}
-          placeholder="이름을 입력해주세요"
-          helperText="미팅에서 표시될 이름이에요"
+          placeholder={t('editProfileSheet.namePlaceholder')}
+          helperText={t('editProfileSheet.nameHelper')}
           editable={!saving}
         />
 
         <View style={styles.emailField}>
           <View style={styles.emailLabelRow}>
-            <Text style={styles.emailLabel}>이메일</Text>
+            <Text style={styles.emailLabel}>{t('editProfileSheet.emailLabel')}</Text>
             <View style={styles.emailBadge}>
-              <Text style={styles.emailBadgeText}>변경 불가</Text>
+              <Text style={styles.emailBadgeText}>{t('editProfileSheet.emailUnchangeable')}</Text>
             </View>
           </View>
           <Text style={styles.emailValue}>{email}</Text>
@@ -193,7 +195,7 @@ export function EditProfileSheet({
         {saving ? (
           <ActivityIndicator color="white" />
         ) : (
-          <Text style={styles.saveButtonLabel}>저장하기</Text>
+          <Text style={styles.saveButtonLabel}>{t('editProfileSheet.saveButton')}</Text>
         )}
       </Pressable>
     </BottomSheet>

@@ -2,15 +2,20 @@ import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AudioManager } from 'react-native-audio-api';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AvatarStack } from '@/components/avatar-stack';
 import { LiveAudioBridge, LiveAudioBridgeHandle } from '@/components/live-audio-bridge';
 import { ParticipantsSidebar } from '@/components/participants-sidebar';
+import { PressableScale } from '@/components/pressable-scale';
 import { Brand, Spacing } from '@/constants/theme';
+import { logCrashBreadcrumb, logEvent } from '@/lib/firebase';
 import { LiveSessionEvent, RoomUser } from '@/lib/live-session';
 import { getMyProfile } from '@/lib/users';
-import { endRoom, fetchRoomDetail } from '@/lib/rooms';
+import { endRoom, fetchRoomDetail, leaveRoomAsMember, startRoom } from '@/lib/rooms';
 
 type AudioState = 'muted' | 'speaking' | 'listening';
 
@@ -52,7 +57,7 @@ function formatElapsed(seconds: number): string {
 }
 
 // Host Live Session PRD v1.0.0 — 호스트 실시간 통역 세션 화면 (P0: 화면/상태머신/텍스트 이벤트).
-// 오디오 캡처/재생(PCM 스트리밍)은 네이티브 모듈 도입 후 다음 단계에서 연동한다.
+// 오디오 캡처/재생(PCM 스트리밍)은 LiveAudioBridge(react-native-audio-api)가 담당한다.
 export default function HostLiveSessionScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
@@ -61,9 +66,10 @@ export default function HostLiveSessionScreen() {
     title: string;
     started?: string;
   }>();
+  const { t } = useTranslation();
   const roomId = params.room_id;
   const roomCode = params.room_code ?? '';
-  const meetingTitle = params.title ?? '미팅';
+  const meetingTitle = params.title ?? t('main.untitledMeeting');
   // Create Meeting PRD의 즉시입장 분기에서는 JoinMeetingSheet 확인 시점에 이미
   // PATCH .../start를 호출해 룸이 active 상태로 들어온다 — WAITING 화면을 또 보여줄 필요가 없다.
   const arrivedAlreadyStarted = params.started === '1';
@@ -80,33 +86,50 @@ export default function HostLiveSessionScreen() {
   const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
   const [users, setUsers] = useState<RoomUser[]>([]);
   const [messages, setMessages] = useState<TimelineMessage[]>([]);
+  // 호스트/참가자가 각자 화면에 진입/시작한 시각부터 따로 카운트하면 헤더 시계가 서로
+  // 달라 보였다 — 서버가 ROOM_STATE_UPDATE로 실어주는 미팅 실제 시작 시각(roomStartedAt)
+  // 기준으로 전원이 동일한 경과 시간을 계산하게 한다.
+  const [roomStartedAt, setRoomStartedAt] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [dotCount, setDotCount] = useState(1);
 
   const [startPopupVisible, setStartPopupVisible] = useState(false);
-  const [exitPopupVisible, setExitPopupVisible] = useState(false);
+  // 호스트만 미팅을 "나가기"(본인만 퇴장, 미팅은 계속됨)와 "종료"(전원 종료)를 구분해야
+  // 한다 — 이전엔 둘 다 같은 팝업/핸들러로 묶여있어서 뒤로가기만 눌러도 미팅 전체가
+  // 끝나버리는 버그가 있었다.
+  const [leavePopupVisible, setLeavePopupVisible] = useState(false);
+  const [endPopupVisible, setEndPopupVisible] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(false);
-  const [finished, setFinished] = useState(false);
 
   const bridgeRef = useRef<LiveAudioBridgeHandle | null>(null);
   const usersRef = useRef<RoomUser[]>([]);
   const openSpeakerIdRef = useRef<Map<string, string>>(new Map());
   const scrollRef = useRef<ScrollView>(null);
+  const autoStartedRef = useRef(false);
 
   // 내 마이크가 음소거 상태여도 다른 사람이 말하고 있으면(activeSpeakerId가 남) 그 통역
   // 오디오는 계속 들리므로 듣는 중(listening)으로 표시해야 한다 — 음소거가 무조건 우선하면
-  // 안 된다. 아무도 말하지 않을 때만 내 음소거 여부로 상태를 결정한다.
+  // 안 된다. 다만 activeSpeakerId가 "나"로 남아있는 상태에서 방금 음소거를 누른 경우는
+  // (서버가 무음 타임아웃으로 턴을 정리하기까지 수 초의 지연이 있다 — silence watchdog)
+  // 즉시 muted로 보여줘야 한다. 그래서 "남이 말하는 중"인지를 먼저 확인하고, 아니면
+  // 내 음소거 여부를 우선한다.
+  const otherIsSpeaking = activeSpeakerId !== null && activeSpeakerId !== myUserId;
   const audioState: AudioState = !hasStarted
     ? 'muted'
-    : activeSpeakerId === myUserId
-      ? 'speaking'
-      : activeSpeakerId
-        ? 'listening'
-        : muted
-          ? 'muted'
+    : otherIsSpeaking
+      ? 'listening'
+      : muted
+        ? 'muted'
+        : activeSpeakerId === myUserId
+          ? 'speaking'
           : 'listening';
 
   // ---- 초기화: 내 프로필 + WebSocket 연결 -------------------------------
+
+  useEffect(() => {
+    logCrashBreadcrumb(`host-live-session: mount roomId=${roomId} arrivedAlreadyStarted=${arrivedAlreadyStarted}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     getMyProfile()
@@ -114,7 +137,7 @@ export default function HostLiveSessionScreen() {
         setMyUserId(profile.id);
         setMyDisplayName(profile.name?.trim() || 'Host');
         setMyLanguage(profile.primary_language);
-        // WebView 오디오 엔진이 소켓을 붙이기 전(첫 ROOM_STATE_UPDATE 도착 전)에 참가자
+        // 네이티브 오디오 엔진이 소켓을 붙이기 전(첫 ROOM_STATE_UPDATE 도착 전)에 참가자
         // 사이드바를 열면 명단이 비어 보이는 버그가 있었다 — 호스트 자신을 먼저 채워둔다.
         // 소켓이 연결되면 ROOM_STATE_UPDATE가 이 값을 그대로 덮어쓴다.
         const myEntry: RoomUser = {
@@ -130,13 +153,18 @@ export default function HostLiveSessionScreen() {
   }, []);
 
   useEffect(() => {
+    if (arrivedAlreadyStarted) logEvent('interpretation_session_start', { room_id: roomId, role: 'host' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     if (!roomId) return;
     fetchRoomDetail(roomId)
       .then((detail) => setPassword(detail.password))
       .catch(() => {});
   }, [roomId]);
 
-  // 라이브 세션 소켓은 LiveAudioBridge(WebView 오디오 엔진)가 단독 소유한다 — 여기서
+  // 라이브 세션 소켓은 LiveAudioBridge(네이티브 오디오 엔진)가 단독 소유한다 — 여기서
   // 별도 WebSocket을 또 열면 서버가 user_id로 참가자를 덮어써 충돌하므로 열지 않는다.
   // 서버가 idle 연결을 끊지 않도록 주기적으로 PING을 보낸다(서버는 무시).
   useEffect(() => {
@@ -146,9 +174,16 @@ export default function HostLiveSessionScreen() {
 
   useEffect(() => {
     if (!hasStarted) return;
-    const timer = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    // roomStartedAt이 아직 안 도착했으면(ROOM_STATE_UPDATE 수신 전) 0부터 보여주다가
+    // 도착하는 즉시 실제 경과 시간으로 보정된다.
+    const tick = () => {
+      if (!roomStartedAt) return;
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - new Date(roomStartedAt).getTime()) / 1000)));
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
-  }, [hasStarted]);
+  }, [hasStarted, roomStartedAt]);
 
   useEffect(() => {
     if (audioState === 'muted') return;
@@ -168,18 +203,19 @@ export default function HostLiveSessionScreen() {
 
           for (const user of event.users) {
             if (!previousIds.has(user.userId)) {
-              pushSystemMessage(`${user.displayName} 님이 세션에 참가했습니다.`);
+              pushSystemMessage(t('hostLiveSession.userJoined', { name: user.displayName }));
             }
           }
           for (const user of previous) {
             if (!nextIds.has(user.userId)) {
-              pushSystemMessage(`${user.displayName} 님이 세션에서 나갔습니다.`);
+              pushSystemMessage(t('hostLiveSession.userLeft', { name: user.displayName }));
             }
           }
 
           usersRef.current = event.users;
           setUsers(event.users);
           setActiveSpeakerId(event.activeSpeakerId);
+          if (event.startedAt) setRoomStartedAt(event.startedAt);
           break;
         }
         case 'SUBTITLE_ORIGINAL': {
@@ -206,13 +242,17 @@ export default function HostLiveSessionScreen() {
           break;
         }
         case 'ROOM_ENDED': {
-          pushSystemMessage(`${event.endedBy} 님(호스트)이 미팅을 종료했습니다.`);
+          // 호스트 본인이 종료한 경우는 handleConfirmEndMeeting에서 이미 직접 이동시키므로,
+          // 이 분기는 (이론상) 다른 경로로 방이 끝났을 때를 대비한 안전망이다.
+          pushSystemMessage(t('hostLiveSession.roomEndedByHost', { name: event.endedBy }));
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-          setTimeout(() => router.replace('/main'), 2000);
+          setTimeout(() => navigateToMainAfterEnd(t('hostLiveSession.meetingEnded')), 1500);
           break;
         }
         case 'PARTICIPANT_KICKED': {
-          Alert.alert('강퇴되었습니다', undefined, [{ text: '확인', onPress: () => router.replace('/main') }]);
+          Alert.alert(t('hostLiveSession.kicked'), undefined, [
+            { text: t('createMeeting.confirm'), onPress: () => navigateToMainAfterEnd() },
+          ]);
           break;
         }
         case 'INTERRUPTED':
@@ -223,6 +263,19 @@ export default function HostLiveSessionScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [router],
   );
+
+  // 메인으로 돌아갈 때 공통 처리 — toastMessage가 있으면 상단 토스트로 띄우고,
+  // refreshMeetings는 항상 같이 보내서 메인 화면 캐시를 한 번 강제로 새로고침시킨다
+  // (방금 끝난 미팅이 "예정된 미팅" 목록에서 즉시 사라지게 하기 위함).
+  function navigateToMainAfterEnd(toastMessage?: string) {
+    router.replace({
+      pathname: '/main',
+      params: {
+        refreshMeetings: '1',
+        ...(toastMessage ? { meetingEndedSnackbar: encodeURIComponent(toastMessage) } : {}),
+      },
+    });
+  }
 
   function pushSystemMessage(text: string) {
     setMessages((prev) => [...prev, { id: `sys-${Date.now()}-${Math.random()}`, kind: 'system', text }]);
@@ -247,7 +300,7 @@ export default function HostLiveSessionScreen() {
         id: `spk-${speakerId}-${Date.now()}`,
         kind: 'speaker',
         speakerId,
-        displayName: speaker?.displayName ?? (isMine ? myDisplayName : '참가자'),
+        displayName: speaker?.displayName ?? (isMine ? myDisplayName : t('hostLiveSession.participantFallback')),
         language: speaker?.language ?? myLanguage,
         isMine,
         time: nowTimeLabel(),
@@ -284,31 +337,81 @@ export default function HostLiveSessionScreen() {
     if (!hasStarted) {
       setStartPopupVisible(true);
     } else {
-      setExitPopupVisible(true);
+      // 시작 후엔 이 버튼이 "미팅 종료"(전원 종료) 의미로 바뀐다 — 뒤로가기(나가기)와는 별개.
+      setEndPopupVisible(true);
     }
   }
 
-  function handleConfirmStart() {
+  // 예약 미팅(스케줄 시간이 미래)을 메인에서 다시 들어와 시작하는 경로는 started=1 없이
+  // 도착하므로(arrivedAlreadyStarted=false) 여기서 사용자가 직접 "예"를 눌러야 시작된다.
+  // 이전엔 이 함수가 로컬 UI 상태만 바꾸고 백엔드 PATCH .../start를 호출하지 않아서
+  // meeting_rooms.status가 영원히 waiting으로 남고 started_at도 안 찍혔다 — 그 결과
+  // 다른 참가자/요약 생성 등 status="active"를 가정하는 로직이 전부 어긋났다. 실제
+  // 시작 시각도 "예약 시각"이 아니라 이 시점의 실제 시각으로 남도록 백엔드 호출을
+  // 추가한다.
+  async function handleConfirmStart() {
     setStartPopupVisible(false);
+    if (!roomId) return;
+    try {
+      await startRoom(roomId);
+    } catch {
+      Alert.alert(t('hostLiveSession.startFailedTitle'), t('hostLiveSession.startFailedBody'));
+      return;
+    }
     setHasStarted(true);
-    setMuted(true);
-    pushSystemMessage(`${meetingTitle}이 시작되었습니다.`);
+    logEvent('interpretation_session_start', { room_id: roomId, role: 'host' });
+    // PRD 변경: 호스트는 미팅 시작과 동시에 마이크가 켜진 상태로 진행된다(음소거 해제 +
+    // 캡처 시작) — 시작하자마자 바로 말할 수 있어야 한다.
+    setMuted(false);
+    bridgeRef.current?.startMic();
+    pushSystemMessage(t('hostLiveSession.meetingStarted', { title: meetingTitle }));
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   }
 
-  function handleToggleMute() {
+  // 음소거 해제 시점에 마이크 권한을 다시 확인한다 — 처음 거부했던 유저가 나중에 설정
+  // 앱에서 권한을 직접 켜고 돌아온 경우, 굳이 화면을 나갔다가 다시 들어올 필요 없이
+  // 음소거 버튼만 눌러도 바로 통역이 시작되게 한다.
+  async function handleToggleMute() {
     if (!hasStarted) return;
-    setMuted((prev) => {
-      const next = !prev;
-      // 음소거 해제 = 마이크 캡처 시작(PCM 스트리밍), 음소거 = 정지.
-      if (next) bridgeRef.current?.stopMic();
-      else bridgeRef.current?.startMic();
-      return next;
-    });
+    if (muted) {
+      const status = await AudioManager.requestRecordingPermissions();
+      if (status !== 'Granted') {
+        if (status === 'Denied') {
+          Alert.alert(t('hostLiveSession.micPermissionDeniedTitle'), t('hostLiveSession.micPermissionDeniedBody'));
+        }
+        return;
+      }
+      setMuted(false);
+      bridgeRef.current?.startMic();
+      return;
+    }
+    setMuted(true);
+    bridgeRef.current?.stopMic();
   }
 
-  async function handleConfirmExit() {
-    setExitPopupVisible(false);
+  // 호스트 본인만 퇴장 — 미팅은 계속된다. 종료 조건은 (a) 시작 후 전원 퇴장 또는
+  // (b) 호스트의 명시적 "미팅 종료"뿐이므로, 여기서는 endRoom을 호출하지 않는다.
+  // WS 연결이 끊기면 서버(room_state.py)가 참가자 목록에서만 제거하고, 남은 인원이
+  // 있으면 미팅은 그대로 유지된다.
+  // 개인 퇴장은 별도 안내 페이지 없이 바로 메인으로 돌아간다 — 미팅 자체는 계속되므로
+  // 토스트도 띄우지 않는다.
+  async function handleConfirmLeave() {
+    setLeavePopupVisible(false);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    bridgeRef.current?.close();
+    try {
+      if (roomId) await leaveRoomAsMember(roomId);
+    } catch {
+      // 퇴장 API 실패해도 클라이언트는 나간다.
+    }
+    logEvent('interpretation_session_end', { room_id: roomId, role: 'host', reason: 'host_left_personal' });
+    navigateToMainAfterEnd();
+  }
+
+  // 호스트의 명시적 미팅 종료 — 전원에게 ROOM_ENDED가 브로드캐스트된다. 호스트 본인은
+  // 별도 안내 페이지 없이 메인으로 이동하면서 상단 토스트로 종료 사실을 안내한다.
+  async function handleConfirmEndMeeting() {
+    setEndPopupVisible(false);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     bridgeRef.current?.close();
     try {
@@ -316,12 +419,17 @@ export default function HostLiveSessionScreen() {
     } catch {
       // 종료 API 실패해도 클라이언트는 나간다 — 사용자 대기시간을 늘리지 않기 위함.
     }
-    setFinished(true);
-    setTimeout(() => router.replace('/main'), 800);
+    logEvent('interpretation_session_end', { room_id: roomId, role: 'host', reason: 'host_ended' });
+    navigateToMainAfterEnd(t('hostLiveSession.meetingEnded'));
   }
 
   const dots = '.'.repeat(dotCount);
-  const statusText = audioState === 'muted' ? '(음소거중..)' : audioState === 'speaking' ? `말하는 중${dots}` : `듣는 중${dots}`;
+  const statusText =
+    audioState === 'muted'
+      ? t('hostLiveSession.statusMuted')
+      : audioState === 'speaking'
+        ? t('hostLiveSession.statusSpeaking', { dots })
+        : t('hostLiveSession.statusListening', { dots });
   const statusColor = audioState === 'muted' ? Brand.error : audioState === 'speaking' ? Brand.primary : Brand.textPrimary;
 
   return (
@@ -337,20 +445,26 @@ export default function HostLiveSessionScreen() {
             // ws_error는 엔진이 자동 재연결을 시도하므로(live-engine.html) 알림으로
             // 매번 끊어 보여주지 않는다 — 마이크 권한 등 실제 복구 불가 오류만 띄운다.
             if (status === 'error' && detail !== 'ws_error') {
-              Alert.alert('오디오 오류', detail ?? '알 수 없는 오류');
+              Alert.alert(
+                t('hostLiveSession.audioErrorTitle'),
+                detail === 'ws_rejected' ? t('hostLiveSession.connectionRejectedBody') : detail ?? t('hostLiveSession.unknownError'),
+              );
+            }
+            // 즉시입장 분기(arrivedAlreadyStarted)는 handleConfirmStart 팝업을 거치지 않아
+            // "미팅이 시작되었습니다" 안내와 마이크 자동 on(PRD 정책)이 둘 다 빠져 있었다 —
+            // 오디오 엔진이 준비된 시점에 한 번만 둘 다 처리한다.
+            if (status === 'ready' && arrivedAlreadyStarted && !autoStartedRef.current) {
+              autoStartedRef.current = true;
+              pushSystemMessage(t('hostLiveSession.meetingStarted', { title: meetingTitle }));
+              setMuted(false);
+              bridgeRef.current?.startMic();
             }
           }}
         />
       ) : null}
 
-      {finished ? (
-        <View style={styles.finishedWrap}>
-          <Text style={styles.finishedText}>미팅이 종료됐어요</Text>
-        </View>
-      ) : (
-        <>
       <View style={styles.topBar}>
-        <Pressable onPress={() => setExitPopupVisible(true)} hitSlop={8}>
+        <Pressable onPress={() => setLeavePopupVisible(true)} hitSlop={8}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
         <Text style={styles.topBarTitle} numberOfLines={1}>
@@ -358,8 +472,8 @@ export default function HostLiveSessionScreen() {
         </Text>
         <View style={styles.topBarRight}>
           <Text style={styles.timerText}>{formatElapsed(elapsedSeconds)}</Text>
-          <Pressable onPress={() => setSidebarVisible(true)} style={styles.avatarStack}>
-            <Text style={styles.avatarStackLabel}>{users.length || 1}</Text>
+          <Pressable onPress={() => setSidebarVisible(true)}>
+            <AvatarStack users={users} />
           </Pressable>
         </View>
       </View>
@@ -384,39 +498,51 @@ export default function HostLiveSessionScreen() {
       <SpeakListenBar state={audioState === 'muted' ? 'idle' : audioState} />
 
       <View style={styles.bottomBar}>
-        <Pressable onPress={handlePlayButtonPress} style={styles.roundButton}>
+        <PressableScale onPress={handlePlayButtonPress} style={styles.roundButton}>
           <Image source={hasStarted ? STOP_ICON : PLAY_ICON} style={styles.playButtonIcon} resizeMode="contain" />
-        </Pressable>
-        <Text style={[styles.statusText, { color: statusColor }]}>{statusText}</Text>
-        <Pressable
+        </PressableScale>
+        {hasStarted && <Text style={[styles.statusText, { color: statusColor }]}>{statusText}</Text>}
+        <PressableScale
           onPress={handleToggleMute}
           disabled={!hasStarted}
           style={[styles.roundButton, styles.micButton, muted ? styles.micButtonMuted : styles.micButtonActive]}>
           <Image source={muted ? MIC_ICON : MIC_ACTIVE_ICON} style={styles.micRoundIcon} resizeMode="contain" />
-        </Pressable>
+        </PressableScale>
       </View>
 
       {startPopupVisible && (
         <ConfirmPopup
-          title="미팅을 시작할까요?"
-          description="시작하면 참가자들이 통역 세션에 입장할 수 있어요."
-          cancelLabel="아니오"
-          confirmLabel="네"
+          title={t('hostLiveSession.startPopupTitle')}
+          description={t('hostLiveSession.startPopupDescription')}
+          cancelLabel={t('common.no')}
+          confirmLabel={t('common.yes')}
           confirmColor={Brand.primary}
           onCancel={() => setStartPopupVisible(false)}
           onConfirm={handleConfirmStart}
         />
       )}
 
-      {exitPopupVisible && (
+      {leavePopupVisible && (
         <ConfirmPopup
-          title="미팅룸 나가기"
-          description="미팅룸을 나가시겠습니까?"
-          cancelLabel="아니오"
-          confirmLabel="네"
+          title={t('hostLiveSession.leavePopupTitle')}
+          description={t('hostLiveSession.leavePopupDescription')}
+          cancelLabel={t('common.no')}
+          confirmLabel={t('common.yes')}
           confirmColor={Brand.error}
-          onCancel={() => setExitPopupVisible(false)}
-          onConfirm={handleConfirmExit}
+          onCancel={() => setLeavePopupVisible(false)}
+          onConfirm={handleConfirmLeave}
+        />
+      )}
+
+      {endPopupVisible && (
+        <ConfirmPopup
+          title={t('hostLiveSession.endPopupTitle')}
+          description={t('hostLiveSession.endPopupDescription')}
+          cancelLabel={t('common.no')}
+          confirmLabel={t('common.yes')}
+          confirmColor={Brand.error}
+          onCancel={() => setEndPopupVisible(false)}
+          onConfirm={handleConfirmEndMeeting}
         />
       )}
 
@@ -434,8 +560,6 @@ export default function HostLiveSessionScreen() {
           users={users}
         />
       )}
-        </>
-      )}
     </SafeAreaView>
   );
 }
@@ -447,6 +571,7 @@ function SpeakerBlockView({
   message: SpeakerMessage;
   onToggleEnglish: () => void;
 }) {
+  const { t } = useTranslation();
   const flag = LANGUAGE_FLAGS[message.language] ?? '🌐';
   const showTranslation = !message.isMine && message.translatedText && message.translatedText !== message.originalText;
   const primaryText = showTranslation ? message.translatedText : message.originalText;
@@ -456,7 +581,7 @@ function SpeakerBlockView({
       <View style={styles.timePill}>
         <Text style={styles.timePillText}>
           {flag} {message.displayName}
-          {message.isMine ? '(나)' : ''} · {message.time}
+          {message.isMine ? t('hostLiveSession.meIndicator') : ''} · {message.time}
         </Text>
       </View>
       <Text style={[styles.speakerText, message.isMine && styles.speakerTextMine]}>{primaryText}</Text>
@@ -466,7 +591,9 @@ function SpeakerBlockView({
           <Text style={styles.englishBoxText} numberOfLines={message.englishExpanded ? undefined : 1}>
             {message.originalText}
           </Text>
-          <Text style={styles.englishBoxToggle}>{message.englishExpanded ? '접기' : '펼쳐보기'}</Text>
+          <Text style={styles.englishBoxToggle}>
+            {message.englishExpanded ? t('hostLiveSession.collapse') : t('hostLiveSession.expand')}
+          </Text>
         </Pressable>
       )}
     </View>
@@ -477,10 +604,14 @@ function SpeakerBlockView({
 // 발광 바가 발화 턴마다 깜빡인다. 안 말할 때는 배경색과 동일해 안 보인다(바텀바 바로 위 배치).
 // speak-bar(Figma 84:420)/listen-bar(186:2887) 사이즈 — 375 기준 프레임 폭에 대한 비율로
 // 변환해서 화면 폭에 관계없이 동일 비율을 유지한다. listen-bar가 speak-bar보다 더 길다.
-const SPEAK_GLOW_WIDTH = '34.4%';
-const SPEAK_LINE_WIDTH = '29.5%';
-const LISTEN_GLOW_WIDTH = '54.7%';
-const LISTEN_LINE_WIDTH = '46.9%';
+// Animated.Value.interpolate로 width를 '34.4%' 같은 퍼센트 문자열로 보간하면 RN에서
+// width가 끝까지 적용되지 않고 0/undefined로 멈춰 막대 자체가 안 보이는 경우가 있다
+// (실제 리포트된 버그) — 화면 폭 기준 고정 px로 미리 변환해 숫자로만 보간한다.
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const SPEAK_GLOW_WIDTH = SCREEN_WIDTH * 0.344;
+const SPEAK_LINE_WIDTH = SCREEN_WIDTH * 0.295;
+const LISTEN_GLOW_WIDTH = SCREEN_WIDTH * 0.547;
+const LISTEN_LINE_WIDTH = SCREEN_WIDTH * 0.469;
 
 // glow(Background gradient)는 막대(Rectangle)와 달리 불투명 색이 아니라 40% 알파 +
 // 블러를 쓴다(Figma Layer blur). RN View엔 CSS blur 필터가 없어 shadow로 흉내낸다.
@@ -687,22 +818,28 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: BOTTOM_BAR_HEIGHT + 1,
-    height: 4,
+    height: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    // 다른 절대배치 레이어(콘텐츠 스크롤뷰 경계 등)에 가려 안 보이는 경우를 방지.
+    zIndex: 5,
+    pointerEvents: 'none',
   },
   speakListenGlow: {
     position: 'absolute',
-    height: 4,
+    height: 8,
     borderRadius: 12,
-    // Figma "Layer blur"(9px)를 RN에는 blur 필터가 없어 shadow로 흉내낸다.
+    // Figma "Layer blur"(9px)를 RN에는 blur 필터가 없어 shadow로 흉내낸다 — 다만 Android는
+    // View shadow*를 렌더링하지 않으므로(elevation만 지원, 색상도 무시) 박스 자체의
+    // backgroundColor(반투명)에 의존한다. 두께를 4 → 8로 올려 실기기에서도 또렷이 보이게 한다.
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.9,
     shadowRadius: 9,
     elevation: 6,
   },
   speakListenLine: {
-    height: 0.5,
+    // 0.5px는 일부 기기 밀도에서 반올림되어 사실상 안 보이는 문제가 있었다 — 3px로 키움.
+    height: 3,
     borderRadius: 1.5,
   },
   bottomBar: {
@@ -785,15 +922,5 @@ const styles = StyleSheet.create({
   popupButtonLabelConfirm: {
     fontSize: 15,
     fontWeight: '700',
-  },
-  finishedWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  finishedText: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: Brand.textPrimary,
   },
 });

@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 
 import { Brand, Spacing } from '@/constants/theme';
 import { createProject, setPendingCreatedProject } from '@/lib/projects';
@@ -25,6 +26,7 @@ const DESCRIPTION_MAX = 200;
 // 미팅 생성 폼의 바텀시트 위에 또 다른 모달을 띄우면 Android에서 터치가 먹지 않는 문제가 있어
 // 별도 화면으로 분리했다 (생성 완료 시 pendingCreatedProject에 담아 이전 화면에서 자동 선택).
 export default function CreateProjectScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -40,7 +42,7 @@ export default function CreateProjectScreen() {
       setPendingCreatedProject(project);
       router.back();
     } catch {
-      Alert.alert('프로젝트 생성에 실패했어요. 다시 시도해주세요');
+      Alert.alert(t('createProjectSheet.createFailed'));
     } finally {
       setSaving(false);
     }
@@ -53,13 +55,13 @@ export default function CreateProjectScreen() {
         <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backButton}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
-        <Text style={styles.topBarTitle}>프로젝트 생성</Text>
+        <Text style={styles.topBarTitle}>{t('createProjectSheet.title')}</Text>
         <Pressable
           onPress={handleConfirm}
           disabled={!isValid || saving}
           style={styles.confirmButton}
           accessibilityRole="button"
-          accessibilityLabel="프로젝트 생성 확인">
+          accessibilityLabel={t('createProjectSheet.confirmAccessibilityLabel')}>
           {saving ? (
             <ActivityIndicator color="white" size="small" />
           ) : (
@@ -70,14 +72,14 @@ export default function CreateProjectScreen() {
 
       <KeyboardAvoidingView style={styles.keyboardAvoider} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <Text style={styles.guideText}>같은 업무에 대한 미팅은 프로젝트로 관리하세요</Text>
+          <Text style={styles.guideText}>{t('createProjectSheet.guideText')}</Text>
 
           <View style={styles.field}>
-            <Text style={styles.label}>무엇을 작업하고 계신가요?</Text>
+            <Text style={styles.label}>{t('createProjectSheet.nameQuestion')}</Text>
             <TextInput
               value={name}
               onChangeText={(text) => setName(text.slice(0, NAME_MAX))}
-              placeholder="프로젝트 이름"
+              placeholder={t('createProjectSheet.namePlaceholder')}
               placeholderTextColor={Brand.textDisabled}
               style={styles.nameInput}
               maxLength={NAME_MAX}
@@ -89,11 +91,11 @@ export default function CreateProjectScreen() {
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.label}>무엇을 이루고자 하시나요?</Text>
+            <Text style={styles.label}>{t('createProjectSheet.descriptionQuestion')}</Text>
             <TextInput
               value={description}
               onChangeText={(text) => setDescription(text.slice(0, DESCRIPTION_MAX))}
-              placeholder="프로젝트, 목표, 주제 등을 설명해 주세요..."
+              placeholder={t('createProjectSheet.descriptionPlaceholder')}
               placeholderTextColor={Brand.textDisabled}
               style={styles.descriptionInput}
               multiline

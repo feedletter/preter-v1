@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
+import { useTranslation } from 'react-i18next';
 
 import { Brand } from '@/constants/theme';
 
@@ -11,6 +12,7 @@ const PRICING_URL = 'https://preter.me/pricing';
 
 // Profile PRD 4장 (SCR-P-03) — 구독 플랜 업그레이드 페이지. 현재 플랜을 query param으로 전달한다.
 export default function SubscriptionScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const { plan } = useLocalSearchParams<{ plan?: string }>();
   const [loading, setLoading] = useState(true);
@@ -22,7 +24,7 @@ export default function SubscriptionScreen() {
         <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backButton}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
-        <Text style={styles.topBarTitle}>구독 플랜</Text>
+        <Text style={styles.topBarTitle}>{t('profileSheet.subscriptionPlan')}</Text>
       </View>
 
       <View style={styles.webviewWrap}>

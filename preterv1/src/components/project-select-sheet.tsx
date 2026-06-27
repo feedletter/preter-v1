@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { BottomSheet } from '@/components/bottom-sheet';
 import { Brand } from '@/constants/theme';
@@ -28,6 +29,7 @@ export function ProjectSelectSheet({
   onApply,
 }: ProjectSelectSheetProps) {
   const router = useRouter();
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(selectedProjectId);
@@ -60,8 +62,8 @@ export function ProjectSelectSheet({
         visible={visible}
         onClose={onClose}
         sheetStyle={isEmpty ? styles.sheetEmpty : styles.sheetFilled}>
-        <Text style={styles.title}>프로젝트 선택</Text>
-        <Text style={styles.description}>선택한 프로젝트의 지시사항과 자료가 통역에 자동 반영돼요</Text>
+        <Text style={styles.title}>{t('projectSelectSheet.title')}</Text>
+        <Text style={styles.description}>{t('projectSelectSheet.description')}</Text>
 
         {loading ? (
           <View style={styles.centerMessage}>
@@ -70,8 +72,8 @@ export function ProjectSelectSheet({
         ) : isEmpty ? (
           <View style={styles.centerMessage}>
             <Text style={styles.emptyIcon}>🗳️</Text>
-            <Text style={styles.emptyTitle}>아직 등록된 프로젝트가 없어요</Text>
-            <Text style={styles.emptySubtitle}>프로젝트의 지시사항과 자료가 통역에 반영돼요</Text>
+            <Text style={styles.emptyTitle}>{t('projectSelectSheet.emptyTitle')}</Text>
+            <Text style={styles.emptySubtitle}>{t('projectSelectSheet.emptySubtitle')}</Text>
           </View>
         ) : (
           <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
@@ -107,7 +109,7 @@ export function ProjectSelectSheet({
               router.push('/create-project');
             }}
             accessibilityRole="button">
-            <Text style={styles.newButtonLabel}>신규 프로젝트 생성하기</Text>
+            <Text style={styles.newButtonLabel}>{t('projectSelectSheet.newProjectButton')}</Text>
           </Pressable>
 
           <Pressable
@@ -116,7 +118,7 @@ export function ProjectSelectSheet({
             disabled={!selectedId}
             accessibilityRole="button">
             <Text style={[styles.applyButtonLabel, !selectedId && styles.applyButtonLabelDisabled]}>
-              적용하기
+              {t('projectSelectSheet.applyButton')}
             </Text>
           </Pressable>
         </View>

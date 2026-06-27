@@ -1,4 +1,4 @@
-import { AudioModule } from 'expo-audio';
+import { AudioManager } from 'react-native-audio-api';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
@@ -15,6 +15,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CodeInput } from '@/components/code-input';
@@ -23,19 +24,24 @@ import { JoinMeetingSheet } from '@/components/join-meeting-sheet';
 import { ProjectSelectSheet } from '@/components/project-select-sheet';
 import { Brand, Spacing } from '@/constants/theme';
 import { Document } from '@/lib/documents';
+import { logEvent } from '@/lib/firebase';
 import { Project } from '@/lib/projects';
+import i18n from '@/lib/i18n';
 import { joinRoomMember, registerParticipant, RoomsApiError, validateRoomMember } from '@/lib/rooms';
 import { getMyProfile } from '@/lib/users';
 
 function formatDateLabel(iso: string): string {
   const d = new Date(iso);
-  return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const datePart = i18n.t('main.dateLabel', { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() });
+  const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${datePart} ${time}`;
 }
 
 // Member Join MeetingRoom PRD v1.0.0 — 로그인 멤버가 코드로 기존 미팅에 참가하는 화면 (SCR-J-01~04).
 // 폼 골격/바텀시트/이어폰 확인은 ★ Create Meeting PRD와 완전 동일 컴포넌트를 재사용한다.
 export default function JoinMeetingScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
 
   const [code, setCode] = useState('');
   const [checking, setChecking] = useState(false);
@@ -76,11 +82,11 @@ export default function JoinMeetingScreen() {
       setRoomTitle(result.title);
     } catch (err) {
       if (err instanceof RoomsApiError && err.code === 'ROOM_NOT_FOUND') {
-        setCodeError('존재하지 않는 미팅 코드예요');
+        setCodeError(t('joinMeeting.codeNotFound'));
       } else if (err instanceof RoomsApiError && err.code === 'ROOM_EXPIRED') {
-        setCodeError('이미 종료된 미팅이에요');
+        setCodeError(t('joinMeeting.codeExpired'));
       } else {
-        setCodeError('미팅 코드를 확인할 수 없어요. 잠시 후 다시 시도해주세요');
+        setCodeError(t('joinMeeting.validateFailed'));
       }
     } finally {
       setChecking(false);
@@ -92,8 +98,16 @@ export default function JoinMeetingScreen() {
     if (!formValid || requestingMic) return;
     setRequestingMic(true);
     try {
-      const { granted } = await AudioModule.requestRecordingPermissionsAsync();
-      if (!granted) setAudioEnabled(false);
+      const status = await AudioManager.requestRecordingPermissions();
+      if (status !== 'Granted') {
+        // guest-meeting-input.tsx와 동일한 거부 처리로 통일 — iOS는 한번 거부하면
+        // 시스템 다이얼로그를 다시 띄우지 않으므로 'Denied'는 "다시 물어볼 수 없음"과
+        // 동치로 취급해 안내 후 청취 전용 모드로 진행한다.
+        setAudioEnabled(false);
+        if (status === 'Denied') {
+          Alert.alert(t('joinMeeting.micPermissionDeniedTitle'), t('joinMeeting.micPermissionDeniedBody'));
+        }
+      }
       try {
         const profile = await getMyProfile();
         setLanguage(profile.primary_language);
@@ -118,24 +132,41 @@ export default function JoinMeetingScreen() {
         audio_enabled: audioEnabled,
       });
 
-      if (result.status === 'waiting') {
+      // PRD 6.1 — 참가 등록(meeting_participants insert)은 status와 무관하게 항상 여기서
+      // 해준다. waiting 상태에서도 등록을 안 해두면 /api/v1/meetings/upcoming의
+      // member_room_ids 조회에 안 걸려서 메인 화면 "예약된 미팅" 목록에 영영 안 뜬다.
+      await registerParticipant(result.room_id, { role: 'member', language, audio_enabled: audioEnabled });
+      logEvent('meeting_join', { method: 'member', room_id: result.room_id });
+
+      const scheduledPassed = result.scheduled_at
+        ? new Date(result.scheduled_at).getTime() <= Date.now()
+        : true;
+
+      if (result.status === 'waiting' && !scheduledPassed) {
+        // 시작 시간이 아직 안 됨 — 메인 화면 "예약된 미팅" 목록으로 안내.
         setEarphoneSheetVisible(false);
         const label = result.scheduled_at ? formatDateLabel(result.scheduled_at) : '';
         router.replace({
           pathname: '/main',
-          params: { reservationSnackbar: encodeURIComponent(`미팅에 참가 등록됐어요! ${label}`) },
+          params: {
+            reservationSnackbar: encodeURIComponent(t('joinMeeting.registeredSnackbar', { label })),
+            refreshMeetings: '1',
+          },
         });
         return;
       }
 
-      await registerParticipant(result.room_id, { role: 'member', language, audio_enabled: audioEnabled });
+      // status === 'active', 또는 status === 'waiting'이지만 예약 시간이 이미 지남
+      // (호스트가 아직 시작 버튼을 안 누른 상태) — 두 경우 모두 미팅 페이지로 바로
+      // 이동한다. join-live-session 화면이 status를 보고 대기 UI/실시간 UI를 자체 분기한다.
       setEarphoneSheetVisible(false);
       router.replace({
         pathname: '/join-live-session',
         params: {
           room_id: result.room_id,
           room_code: code,
-          title: result.title ?? roomTitle ?? '미팅',
+          title: result.title ?? roomTitle ?? t('main.untitledMeeting'),
+          status: result.status,
           password: needsPassword ? password : undefined,
         },
       });
@@ -147,18 +178,18 @@ export default function JoinMeetingScreen() {
             setPasswordError(true);
             break;
           case 'ROOM_FULL':
-            Alert.alert('미팅 정원이 가득 찼어요', '호스트에게 문의해주세요.');
+            Alert.alert(t('joinMeeting.roomFullTitle'), t('joinMeeting.roomFullBody'));
             break;
           case 'ROOM_EXPIRED':
-            Alert.alert('이미 종료된 미팅이에요', undefined, [
-              { text: '확인', onPress: () => handleChangeCode('') },
+            Alert.alert(t('joinMeeting.codeExpired'), undefined, [
+              { text: t('createMeeting.confirm'), onPress: () => handleChangeCode('') },
             ]);
             break;
           default:
-            Alert.alert('참가에 실패했어요. 잠시 후 다시 시도해주세요');
+            Alert.alert(t('joinMeeting.joinFailed'));
         }
       } else {
-        Alert.alert('참가에 실패했어요. 잠시 후 다시 시도해주세요');
+        Alert.alert(t('joinMeeting.joinFailed'));
       }
     } finally {
       setJoining(false);
@@ -172,51 +203,53 @@ export default function JoinMeetingScreen() {
         <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backButton}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
-        <Text style={styles.topBarTitle}>미팅룸 참가</Text>
+        <Text style={styles.topBarTitle}>{t('joinMeeting.topBarTitle')}</Text>
       </View>
 
       <KeyboardAvoidingView style={styles.keyboardAvoider} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.header}>
-            <Text style={styles.headerTitle}>미팅룸 정보 입력</Text>
-            <Text style={styles.headerSubtitle}>미팅룸 코드를 입력하고 참가자 정보를 입력해주세요</Text>
+            <Text style={styles.headerTitle}>{t('joinMeeting.headerTitle')}</Text>
+            <Text style={styles.headerSubtitle}>{t('joinMeeting.headerSubtitle')}</Text>
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.label}>채팅방 코드 *</Text>
+            <Text style={styles.label}>{t('joinMeeting.codeLabel')}</Text>
             <View style={styles.codeWrap}>
               <CodeInput value={code} onChangeText={handleChangeCode} editable={!checking} hasError={!!codeError} />
               {checking && <ActivityIndicator style={styles.codeSpinner} color={Brand.primary} />}
             </View>
             <Text style={[styles.helperText, codeError ? styles.helperTextError : styles.helperTextAccent]}>
-              {codeError ?? '숫자 6자리 채팅방 코드를 입력해주세요'}
+              {codeError ?? (codeValid ? t('joinMeeting.codeValid') : t('joinMeeting.codeHelper'))}
             </Text>
           </View>
 
           <Pressable style={styles.dropdownField} onPress={() => setProjectSheetVisible(true)}>
-            <Text style={styles.label}>프로젝트 선택</Text>
+            <Text style={styles.label}>{t('createMeeting.projectLabel')}</Text>
             <View style={styles.dropdownTextArea}>
               <Text style={[styles.dropdownValue, !project && styles.placeholderText]} numberOfLines={1}>
-                {project?.name ?? '프로젝트를 선택해주세요 (선택)'}
+                {project?.name ?? t('createMeeting.projectPlaceholder')}
               </Text>
               <Text style={styles.dropdownArrow}>▾</Text>
             </View>
-            <Text style={styles.helperTextAccent}>선택한 프로젝트의 지시사항과 자료가 통역에 자동 반영돼요</Text>
+            <Text style={styles.helperTextAccent}>{t('createMeeting.projectHelper')}</Text>
           </Pressable>
 
           <Pressable style={styles.dropdownField} onPress={() => setDocumentSheetVisible(true)}>
-            <Text style={styles.label}>미팅 자료 선택</Text>
+            <Text style={styles.label}>{t('createMeeting.documentLabel')}</Text>
             <View style={styles.dropdownTextArea}>
               <Text style={[styles.dropdownValue, !document && styles.placeholderText]} numberOfLines={1}>
-                {document?.title ?? '자료를 선택해주세요 (선택)'}
+                {document?.title ?? t('createMeeting.documentPlaceholder')}
               </Text>
               <Text style={styles.dropdownArrow}>▾</Text>
             </View>
-            <Text style={styles.helperTextAccent}>자료를 선택하면 AI가 내용을 참고하며 통역해요</Text>
+            <Text style={styles.helperTextAccent}>{t('joinMeeting.documentHelper')}</Text>
           </Pressable>
 
           <View style={styles.field}>
-            <Text style={styles.label}>채팅방 비밀번호 {needsPassword ? '*' : '(선택)'}</Text>
+            <Text style={styles.label}>
+              {needsPassword ? t('joinMeeting.passwordLabelRequired') : t('joinMeeting.passwordLabelOptional')}
+            </Text>
             <View style={styles.textArea}>
               <TextInput
                 value={password}
@@ -224,7 +257,7 @@ export default function JoinMeetingScreen() {
                   setPassword(text.replace(/[^0-9]/g, '').slice(0, 8));
                   setPasswordError(false);
                 }}
-                placeholder="채팅방 비밀번호"
+                placeholder={t('joinMeeting.passwordPlaceholder')}
                 placeholderTextColor={Brand.textDisabled}
                 style={styles.input}
                 keyboardType="number-pad"
@@ -234,17 +267,17 @@ export default function JoinMeetingScreen() {
             </View>
             <Text style={[styles.helperText, passwordError && styles.helperTextError]}>
               {passwordError
-                ? '비밀번호가 올바르지 않아요'
+                ? t('guestMeetingInput.passwordError')
                 : password.length > 0 && !passwordValid
-                  ? '숫자 4자리 이상 입력해주세요'
-                  : '미팅 비밀번호를 입력해주세요 (선택)'}
+                  ? t('createMeeting.passwordTooShort')
+                  : t('joinMeeting.passwordHelper')}
             </Text>
           </View>
 
           <View style={styles.audioRow}>
             <View style={styles.audioText}>
-              <Text style={styles.audioLabel}>오디오 연결</Text>
-              <Text style={styles.audioSublabel}>마이크와 스피커를 활성화해요</Text>
+              <Text style={styles.audioLabel}>{t('guestMeetingInput.audioLabel')}</Text>
+              <Text style={styles.audioSublabel}>{t('guestMeetingInput.audioSublabel')}</Text>
             </View>
             <Switch
               value={audioEnabled}
@@ -266,7 +299,7 @@ export default function JoinMeetingScreen() {
               <ActivityIndicator color="white" />
             ) : (
               <Text style={[styles.primaryButtonLabel, !formValid && styles.primaryButtonLabelDisabled]}>
-                미팅 참가하기
+                {t('joinMeeting.joinButton')}
               </Text>
             )}
           </Pressable>
@@ -290,7 +323,7 @@ export default function JoinMeetingScreen() {
       <JoinMeetingSheet
         visible={earphoneSheetVisible}
         joining={joining}
-        confirmLabel="미팅 참가하기"
+        confirmLabel={t('joinMeeting.joinButton')}
         onConfirm={handleConfirmJoin}
         onClose={() => setEarphoneSheetVisible(false)}
       />

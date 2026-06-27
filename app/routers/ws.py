@@ -8,6 +8,7 @@ from app.core.auth import AuthError, verify_token
 from app.core.gemini_session import GeminiLiveSession
 from app.core.guest_auth import GuestAuthError, verify_guest_token
 from app.core.meeting_context import fetch_meeting_context
+from app.core.meeting_summary import finalize_meeting
 from app.core.room_state import Participant, room_manager
 from app.core.supabase_client import get_client
 
@@ -99,7 +100,7 @@ def _load_room_row(room_id: str) -> dict | None:
     result = (
         get_client()
         .table("meeting_rooms")
-        .select("id, status, project_id, document_id")
+        .select("id, status, project_id, document_id, started_at")
         .eq("id", room_id)
         .execute()
     )
@@ -165,7 +166,9 @@ async def room_session(websocket: WebSocket, room_id: str, token: str):
     instructions, keywords = await asyncio.to_thread(
         fetch_meeting_context, room_row.get("project_id"), room_row.get("document_id")
     )
-    room = await room_manager.get_or_create(room_id, instructions, keywords, status=room_row["status"])
+    room = await room_manager.get_or_create(
+        room_id, instructions, keywords, status=room_row["status"], started_at=room_row.get("started_at")
+    )
 
     participant = Participant(
         user_id=user_id,
@@ -200,13 +203,26 @@ async def room_session(websocket: WebSocket, room_id: str, token: str):
         await room.remove_participant(user_id)
         if room.is_empty():
             # Guest Live Session PRD 7.2 — 모든 참가자 퇴장 시 방을 자동 종료한다.
-            await asyncio.to_thread(_end_room_if_active, room_id)
+            ended_now = await asyncio.to_thread(_end_room_if_active, room_id)
+            if ended_now:
+                # After Meeting PRD 6-3/8-1 — 호스트가 명시적으로 종료하지 않고 전원이
+                # 퇴장한 경우에도 동일하게 speaker_blocks 적재 + AI 요약 생성을 트리거한다.
+                blocks = room.pop_session_buffer()
+                asyncio.create_task(finalize_meeting(room_id, blocks))
         await room_manager.remove_if_empty(room_id)
 
 
-def _end_room_if_active(room_id: str) -> None:
+def _end_room_if_active(room_id: str) -> bool:
     from datetime import datetime, timezone
 
-    get_client().table("meeting_rooms").update(
-        {"status": "ended", "ended_at": datetime.now(timezone.utc).isoformat()}
-    ).eq("id", room_id).neq("status", "ended").execute()
+    # "전원 퇴장 시 자동 종료"는 미팅이 이미 시작된(active) 경우에만 적용한다 — 호스트가
+    # 시작 전(waiting)에 잠깐 나가서 참가자가 0명이 되는 것만으로 미팅을 끝내버리면 안 된다.
+    result = (
+        get_client()
+        .table("meeting_rooms")
+        .update({"status": "ended", "ended_at": datetime.now(timezone.utc).isoformat()})
+        .eq("id", room_id)
+        .eq("status", "active")
+        .execute()
+    )
+    return bool(result.data)

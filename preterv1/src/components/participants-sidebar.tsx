@@ -1,7 +1,8 @@
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Easing, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Easing, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 
 import { Brand } from '@/constants/theme';
 import { fetchRoomParticipants, kickParticipant, RoomParticipant } from '@/lib/rooms';
@@ -57,9 +58,11 @@ export function ParticipantsSidebar({
   myUserId,
   users,
 }: ParticipantsSidebarProps) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const [mounted, setMounted] = useState(visible);
   const [participantRows, setParticipantRows] = useState<RoomParticipant[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
   const dimOpacity = useRef(new Animated.Value(0)).current;
   const translateX = useRef(new Animated.Value(PANEL_WIDTH)).current;
 
@@ -87,15 +90,32 @@ export function ParticipantsSidebar({
 
   if (!mounted) return null;
 
+  // 참가자 입장/퇴장이 ROOM_STATE_UPDATE로 실시간 반영되어야 정상이지만, 네트워크
+  // 끊김 등으로 한 번 누락되면 사이드바가 영구히 옛 명단을 보여줄 수 있다 — 풀투
+  // 리프레시로 호스트는 참가자 행(participantRows)을 다시 조회할 수 있는 안전망을 둔다.
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      if (isHost) {
+        const rows = await fetchRoomParticipants(roomId);
+        setParticipantRows(rows);
+      }
+    } catch {
+      // 새로고침 실패는 조용히 무시 — 기존 명단을 그대로 유지.
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   async function handleCopyCode() {
     await Clipboard.setStringAsync(formatRoomCode(roomCode));
-    Alert.alert('복사됐어요');
+    Alert.alert(t('participantsSidebar.copied'));
   }
 
   async function handleCopyPassword() {
     if (!password) return;
     await Clipboard.setStringAsync(password);
-    Alert.alert('복사됐어요');
+    Alert.alert(t('participantsSidebar.copied'));
   }
 
   async function handleShare() {
@@ -124,17 +144,17 @@ export function ParticipantsSidebar({
   function handleKick(user: RoomUser) {
     const row = findParticipantRow(user.userId);
     if (!row) return;
-    Alert.alert(`${user.displayName}님을 내보낼까요?`, undefined, [
-      { text: '취소', style: 'cancel' },
+    Alert.alert(t('participantsSidebar.kickConfirmTitle', { name: user.displayName }), undefined, [
+      { text: t('participantsSidebar.cancel'), style: 'cancel' },
       {
-        text: '내보내기',
+        text: t('participantsSidebar.kick'),
         style: 'destructive',
         onPress: async () => {
           try {
             await kickParticipant(roomId, row.id);
             setParticipantRows((prev) => prev.filter((r) => r.id !== row.id));
           } catch {
-            Alert.alert('강퇴에 실패했어요');
+            Alert.alert(t('participantsSidebar.kickFailed'));
           }
         },
       },
@@ -151,8 +171,10 @@ export function ParticipantsSidebar({
           styles.panel,
           { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16, transform: [{ translateX }] },
         ]}>
-        <Text style={styles.title}>참가자 ({users.length})</Text>
-        <View style={styles.list}>
+        <Text style={styles.title}>{t('participantsSidebar.title', { count: users.length })}</Text>
+        <ScrollView
+          style={styles.list}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={Brand.primary} />}>
           {sortedUsers.map((user) => {
             const isMe = user.userId === myUserId;
             return (
@@ -164,7 +186,7 @@ export function ParticipantsSidebar({
                   <View style={styles.nameLine}>
                     <Text style={styles.name} numberOfLines={1}>
                       {user.displayName}
-                      {isMe ? ' (나)' : ''}
+                      {isMe ? ` ${t('participantsSidebar.meIndicator')}` : ''}
                     </Text>
                     {user.role === 'host' && (
                       <View style={styles.hostBadge}>
@@ -177,26 +199,26 @@ export function ParticipantsSidebar({
                   </Text>
                 </View>
                 {isHost && !isMe && (
-                  <Pressable onPress={() => handleKick(user)} hitSlop={8} accessibilityLabel="강퇴">
+                  <Pressable onPress={() => handleKick(user)} hitSlop={8} accessibilityLabel={t('participantsSidebar.kick')}>
                     <Text style={styles.kickIcon}>✕</Text>
                   </Pressable>
                 )}
               </View>
             );
           })}
-        </View>
+        </ScrollView>
 
         <View style={styles.footer}>
           <Pressable style={styles.footerRow} onPress={handleCopyCode}>
-            <Text style={styles.footerLabel}>미팅 코드</Text>
+            <Text style={styles.footerLabel}>{t('participantsSidebar.meetingCode')}</Text>
             <Text style={styles.footerValue}>{formatRoomCode(roomCode)}</Text>
           </Pressable>
           <Pressable style={styles.footerRow} onPress={handleCopyPassword} disabled={!password}>
-            <Text style={styles.footerLabel}>미팅 비밀번호</Text>
-            <Text style={styles.footerValue}>{password ?? '설정 안함'}</Text>
+            <Text style={styles.footerLabel}>{t('participantsSidebar.meetingPassword')}</Text>
+            <Text style={styles.footerValue}>{password ?? t('participantsSidebar.passwordNotSet')}</Text>
           </Pressable>
           <Pressable style={styles.shareButton} onPress={handleShare} accessibilityRole="button">
-            <Text style={styles.shareButtonLabel}>참가 정보 공유하기</Text>
+            <Text style={styles.shareButtonLabel}>{t('participantsSidebar.shareButton')}</Text>
           </Pressable>
         </View>
       </Animated.View>

@@ -17,6 +17,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CreateProjectSheet } from '@/components/create-project-sheet';
@@ -101,6 +102,7 @@ export function LeftSidePanel({
   onProjectCreated,
 }: LeftSidePanelProps) {
   const router = useRouter();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const [mounted, setMounted] = useState(visible);
   const translateX = useRef(new Animated.Value(-PANEL_WIDTH)).current;
@@ -191,7 +193,7 @@ export function LeftSidePanel({
   }
 
   function handlePressMeeting(meeting: RecentMeeting) {
-    Alert.alert('미팅 상세 화면은 준비 중이에요');
+    router.push({ pathname: '/after-meeting', params: { room_id: meeting.id } });
   }
 
   function handlePressDocument(doc: Document) {
@@ -205,7 +207,7 @@ export function LeftSidePanel({
       const document = await createDocument();
       router.push({ pathname: '/doc-detail', params: { document_id: document.id } });
     } catch {
-      Alert.alert('자료 생성에 실패했어요');
+      Alert.alert(t('leftSidePanel.createDocumentFailed'));
     } finally {
       setCreatingDocument(false);
     }
@@ -234,7 +236,7 @@ export function LeftSidePanel({
             <Pressable
               hitSlop={8}
               onPress={handleClose}
-              accessibilityLabel="닫기"
+              accessibilityLabel={t('leftSidePanel.close')}
               accessibilityRole="button"
               style={styles.closeButton}>
               <Text style={styles.closeIcon}>✕</Text>
@@ -246,14 +248,14 @@ export function LeftSidePanel({
               style={[styles.tabItem, tab !== 'meeting' && styles.tabItemUnselectedBorder]}
               onPress={() => setTab('meeting')}
               accessibilityRole="button">
-              <Text style={[styles.tabLabel, tab === 'meeting' && styles.tabLabelActive]}>미팅</Text>
+              <Text style={[styles.tabLabel, tab === 'meeting' && styles.tabLabelActive]}>{t('leftSidePanel.meetingTab')}</Text>
               {tab === 'meeting' && <View style={styles.tabIndicator} />}
             </Pressable>
             <Pressable
               style={[styles.tabItem, tab !== 'document' && styles.tabItemUnselectedBorder]}
               onPress={() => setTab('document')}
               accessibilityRole="button">
-              <Text style={[styles.tabLabel, tab === 'document' && styles.tabLabelActive]}>미팅 자료</Text>
+              <Text style={[styles.tabLabel, tab === 'document' && styles.tabLabelActive]}>{t('leftSidePanel.documentTab')}</Text>
               {tab === 'document' && <View style={styles.tabIndicator} />}
             </Pressable>
           </View>
@@ -270,26 +272,26 @@ export function LeftSidePanel({
               </View>
             ) : loadError ? (
               <View style={styles.centerMessage}>
-                <Text style={styles.errorText}>목록을 불러오지 못했어요</Text>
+                <Text style={styles.errorText}>{t('leftSidePanel.loadError')}</Text>
                 <Pressable onPress={onRefresh} style={styles.retryButton}>
-                  <Text style={styles.retryButtonLabel}>다시 시도</Text>
+                  <Text style={styles.retryButtonLabel}>{t('main.retry')}</Text>
                 </Pressable>
               </View>
             ) : tab === 'meeting' ? (
               meetingTabEmpty ? (
                 <View style={styles.centerMessage}>
                   <Text style={styles.emptyIcon}>📋</Text>
-                  <Text style={styles.emptyText}>진행한 미팅이 없어요</Text>
+                  <Text style={styles.emptyText}>{t('leftSidePanel.noMeetings')}</Text>
                 </View>
               ) : meetingTabNoSearchResults ? (
                 <View style={styles.centerMessage}>
-                  <Text style={styles.emptyText}>검색 결과가 없어요</Text>
+                  <Text style={styles.emptyText}>{t('leftSidePanel.noSearchResults')}</Text>
                 </View>
               ) : (
                 <View>
                   {filteredProjects.length > 0 && (
                     <View style={styles.section}>
-                      <Text style={styles.sectionLabel}>프로젝트</Text>
+                      <Text style={styles.sectionLabel}>{t('leftSidePanel.projectsSection')}</Text>
                       {filteredProjects.map((project) => (
                         <Pressable
                           key={project.id}
@@ -307,7 +309,7 @@ export function LeftSidePanel({
                   )}
                   {filteredMeetings.length > 0 && (
                     <View style={styles.section}>
-                      <Text style={styles.sectionLabel}>최근 미팅</Text>
+                      <Text style={styles.sectionLabel}>{t('leftSidePanel.recentMeetingsSection')}</Text>
                       {filteredMeetings.map((meeting) => (
                         <Pressable
                           key={meeting.id}
@@ -316,7 +318,7 @@ export function LeftSidePanel({
                           accessibilityRole="button">
                           <View style={styles.rowTextCol}>
                             <HighlightedText
-                              text={meeting.title ?? '제목 없는 미팅'}
+                              text={meeting.title ?? t('main.noTitleMeeting')}
                               keyword={debouncedQuery}
                               style={styles.rowTitle}
                             />
@@ -332,11 +334,11 @@ export function LeftSidePanel({
             ) : documentTabEmpty ? (
               <View style={styles.centerMessage}>
                 <Text style={styles.emptyIcon}>📁</Text>
-                <Text style={styles.emptyText}>저장된 자료가 없어요</Text>
+                <Text style={styles.emptyText}>{t('leftSidePanel.noDocuments')}</Text>
               </View>
             ) : documentTabNoSearchResults ? (
               <View style={styles.centerMessage}>
-                <Text style={styles.emptyText}>검색 결과가 없어요</Text>
+                <Text style={styles.emptyText}>{t('leftSidePanel.noSearchResults')}</Text>
               </View>
             ) : (
               <View>
@@ -363,7 +365,7 @@ export function LeftSidePanel({
                 style={styles.floatingButton}
                 onPress={() => setCreateProjectVisible(true)}
                 accessibilityRole="button">
-                <Text style={styles.floatingButtonLabel}>새 프로젝트</Text>
+                <Text style={styles.floatingButtonLabel}>{t('leftSidePanel.newProject')}</Text>
               </Pressable>
             ) : (
               <Pressable
@@ -374,7 +376,7 @@ export function LeftSidePanel({
                 {creatingDocument ? (
                   <ActivityIndicator color="white" size="small" />
                 ) : (
-                  <Text style={styles.floatingButtonLabel}>새 미팅 자료</Text>
+                  <Text style={styles.floatingButtonLabel}>{t('leftSidePanel.newDocument')}</Text>
                 )}
               </Pressable>
             )}
@@ -386,7 +388,7 @@ export function LeftSidePanel({
               <TextInput
                 value={query}
                 onChangeText={setQuery}
-                placeholder={tab === 'meeting' ? '검색' : '자료 검색'}
+                placeholder={tab === 'meeting' ? t('leftSidePanel.searchMeetingPlaceholder') : t('leftSidePanel.searchDocumentPlaceholder')}
                 placeholderTextColor={Brand.textDisabled}
                 style={styles.searchInput}
               />

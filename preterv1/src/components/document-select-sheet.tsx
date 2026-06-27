@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { BottomSheet } from '@/components/bottom-sheet';
 import { Brand } from '@/constants/theme';
@@ -28,6 +29,7 @@ export function DocumentSelectSheet({
   onApply,
 }: DocumentSelectSheetProps) {
   const router = useRouter();
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(selectedDocumentId);
@@ -57,7 +59,7 @@ export function DocumentSelectSheet({
       onClose();
       router.push({ pathname: '/doc-detail', params: { document_id: document.id } });
     } catch {
-      Alert.alert('자료 생성에 실패했어요');
+      Alert.alert(t('documentSelectSheet.createFailed'));
     } finally {
       setCreating(false);
     }
@@ -67,8 +69,8 @@ export function DocumentSelectSheet({
 
   return (
     <BottomSheet visible={visible} onClose={onClose} sheetStyle={isEmpty ? styles.sheetEmpty : styles.sheetFilled}>
-      <Text style={styles.title}>미팅 자료 선택</Text>
-      <Text style={styles.description}>오늘 미팅에서 다룰 자료를 골라주세요. AI가 내용을 파악하고 통역할게요</Text>
+      <Text style={styles.title}>{t('documentSelectSheet.title')}</Text>
+      <Text style={styles.description}>{t('documentSelectSheet.description')}</Text>
 
       {loading ? (
         <View style={styles.centerMessage}>
@@ -77,8 +79,8 @@ export function DocumentSelectSheet({
       ) : isEmpty ? (
         <View style={styles.centerMessage}>
           <Text style={styles.emptyIcon}>📄</Text>
-          <Text style={styles.emptyTitle}>아직 등록된 자료가 없어요</Text>
-          <Text style={styles.emptySubtitle}>자료를 추가하면 통역 중 자동으로 참고해요</Text>
+          <Text style={styles.emptyTitle}>{t('documentSelectSheet.emptyTitle')}</Text>
+          <Text style={styles.emptySubtitle}>{t('documentSelectSheet.emptySubtitle')}</Text>
         </View>
       ) : (
         <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
@@ -118,7 +120,7 @@ export function DocumentSelectSheet({
           {creating ? (
             <ActivityIndicator color={Brand.primary} size="small" />
           ) : (
-            <Text style={styles.newButtonLabel}>신규 자료 생성하기</Text>
+            <Text style={styles.newButtonLabel}>{t('documentSelectSheet.newDocumentButton')}</Text>
           )}
         </Pressable>
 
@@ -127,7 +129,7 @@ export function DocumentSelectSheet({
           onPress={handleApply}
           disabled={!selectedId}
           accessibilityRole="button">
-          <Text style={[styles.applyButtonLabel, !selectedId && styles.applyButtonLabelDisabled]}>적용하기</Text>
+          <Text style={[styles.applyButtonLabel, !selectedId && styles.applyButtonLabelDisabled]}>{t('documentSelectSheet.applyButton')}</Text>
         </Pressable>
       </View>
     </BottomSheet>

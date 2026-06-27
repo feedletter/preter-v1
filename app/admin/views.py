@@ -5,9 +5,14 @@
 그게 끝이다. 디자인이나 프론트엔드 작업이 필요 없다.
 """
 
-from sqladmin import ModelView
+from sqladmin import BaseView, ModelView, expose
+from sqladmin.filters import AllUniqueStringValuesFilter, BooleanFilter
+from sqlalchemy import text as sql_text
+from starlette.requests import Request
 
+from app.admin.db import get_admin_engine
 from app.admin.models import (
+    AiUsageLog,
     BusinessCard,
     Document,
     DocumentContext,
@@ -184,7 +189,13 @@ class DocumentMessageAdmin(ModelView, model=DocumentMessage):
     column_searchable_list = [DocumentMessage.file_name, DocumentMessage.content]
     column_sortable_list = [DocumentMessage.created_at]
     column_default_sort = [(DocumentMessage.created_at, True)]
-    column_filters = [DocumentMessage.status, DocumentMessage.type]
+    # sqladmin 0.24.0부터 column_filters는 raw 컬럼이 아니라 Filter 인스턴스를 요구한다
+    # (raw 컬럼을 넣으면 list() 내부에서 filter_.parameter_name 접근 시 AttributeError →
+    # 500으로 그대로 죽음 — 실제 운영에서 발생한 버그).
+    column_filters = [
+        AllUniqueStringValuesFilter(DocumentMessage.status),
+        AllUniqueStringValuesFilter(DocumentMessage.type),
+    ]
     can_create = True
 
 
@@ -202,7 +213,10 @@ class DocumentContextAdmin(ModelView, model=DocumentContext):
     ]
     column_sortable_list = [DocumentContext.created_at]
     column_default_sort = [(DocumentContext.created_at, True)]
-    column_filters = [DocumentContext.language_hint, DocumentContext.priority]
+    column_filters = [
+        AllUniqueStringValuesFilter(DocumentContext.language_hint),
+        AllUniqueStringValuesFilter(DocumentContext.priority),
+    ]
     can_create = True
 
 
@@ -276,7 +290,10 @@ class MeetingRoomAdmin(ModelView, model=MeetingRoom):
     column_searchable_list = [MeetingRoom.room_code, MeetingRoom.title]
     column_sortable_list = [MeetingRoom.created_at, MeetingRoom.status]
     column_default_sort = [(MeetingRoom.created_at, True)]
-    column_filters = [MeetingRoom.status, MeetingRoom.primary_language]
+    column_filters = [
+        AllUniqueStringValuesFilter(MeetingRoom.status),
+        AllUniqueStringValuesFilter(MeetingRoom.primary_language),
+    ]
     # 평문 비밀번호는 운영자에게도 노출하지 않음 (column_details_list에도 포함 안 시킴)
     column_list_exclude_list = [MeetingRoom.password]
     form_excluded_columns = [MeetingRoom.password]
@@ -300,7 +317,10 @@ class MeetingParticipantAdmin(ModelView, model=MeetingParticipant):
         MeetingParticipant.is_kicked,
     ]
     column_sortable_list = [MeetingParticipant.joined_at]
-    column_filters = [MeetingParticipant.role, MeetingParticipant.is_kicked]
+    column_filters = [
+        AllUniqueStringValuesFilter(MeetingParticipant.role),
+        BooleanFilter(MeetingParticipant.is_kicked),
+    ]
     can_create = True
 
 
@@ -323,7 +343,10 @@ class GuestSessionAdmin(ModelView, model=GuestSession):
         GuestSession.summary_sent,
     ]
     column_sortable_list = [GuestSession.joined_at, GuestSession.expires_at]
-    column_filters = [GuestSession.language, GuestSession.summary_sent]
+    column_filters = [
+        AllUniqueStringValuesFilter(GuestSession.language),
+        BooleanFilter(GuestSession.summary_sent),
+    ]
     column_searchable_list = [GuestSession.display_name, GuestSession.email]
     # JWT 토큰 값은 탈취 위험으로 노출/입력 모두 막음 (생성 시 모델에서 자동 발급).
     column_details_exclude_list = [GuestSession.session_token]
@@ -348,7 +371,7 @@ class MeetingSummaryAdmin(ModelView, model=MeetingSummary):
         MeetingSummary.completed_at,
     ]
     column_sortable_list = [MeetingSummary.created_at]
-    column_filters = [MeetingSummary.status]
+    column_filters = [AllUniqueStringValuesFilter(MeetingSummary.status)]
     can_create = True
 
 
@@ -368,7 +391,92 @@ class ReportAdmin(ModelView, model=Report):
     column_sortable_list = [Report.created_at, Report.category]
     column_default_sort = [(Report.created_at, True)]
     # 운영 케이스 3: 카테고리로 필터링 + 내용(본문) 검색.
-    column_filters = [Report.category]
+    column_filters = [AllUniqueStringValuesFilter(Report.category)]
     column_searchable_list = [Report.body]
     can_create = True
     can_edit = True
+
+
+class AiUsageLogAdmin(ModelView, model=AiUsageLog):
+    name = "AI 사용 로그"
+    name_plural = "AI 사용 로그"
+    icon = "fa-solid fa-receipt"
+    category = "운영"
+
+    column_list = [
+        AiUsageLog.created_at,
+        AiUsageLog.provider,
+        AiUsageLog.model,
+        AiUsageLog.input_tokens,
+        AiUsageLog.output_tokens,
+        AiUsageLog.cost_usd,
+        AiUsageLog.context,
+    ]
+    column_sortable_list = [AiUsageLog.created_at, AiUsageLog.cost_usd]
+    column_default_sort = [(AiUsageLog.created_at, True)]
+    column_filters = [
+        AllUniqueStringValuesFilter(AiUsageLog.provider),
+        AllUniqueStringValuesFilter(AiUsageLog.model),
+    ]
+    can_create = False
+    can_edit = False
+
+
+class AiUsageDashboard(BaseView):
+    """일별 AI API 비용 대시보드 — 호출이 발생한 그 자리(예: document_ai.py)에서
+    app/core/ai_usage.py가 ai_usage_logs에 적재한 원장을 날짜/provider/model별로
+    합산해서 보여준다. 별도 프론트엔드 없이 sqladmin 커스텀 페이지(BaseView)로 구현.
+    """
+
+    name = "일별 AI 비용"
+    icon = "fa-solid fa-chart-line"
+    category = "운영"
+
+    @expose("/ai-usage-dashboard", methods=["GET"])
+    async def dashboard(self, request: Request):
+        engine = get_admin_engine()
+        async with engine.connect() as conn:
+            daily_rows = (
+                await conn.execute(
+                    sql_text(
+                        """
+                        select
+                          date_trunc('day', created_at) as day,
+                          provider,
+                          model,
+                          sum(input_tokens) as input_tokens,
+                          sum(output_tokens) as output_tokens,
+                          sum(cost_usd) as cost_usd
+                        from public.ai_usage_logs
+                        group by 1, 2, 3
+                        order by 1 desc, 2, 3
+                        limit 200
+                        """
+                    )
+                )
+            ).mappings().all()
+
+            total_row = (
+                await conn.execute(
+                    sql_text(
+                        """
+                        select
+                          coalesce(sum(cost_usd), 0) as total_cost_usd,
+                          coalesce(sum(input_tokens), 0) as total_input_tokens,
+                          coalesce(sum(output_tokens), 0) as total_output_tokens
+                        from public.ai_usage_logs
+                        where created_at >= now() - interval '30 days'
+                        """
+                    )
+                )
+            ).mappings().one()
+
+        return await self.templates.TemplateResponse(
+            request,
+            "ai_usage_dashboard.html",
+            {
+                "daily_rows": daily_rows,
+                "total_row": total_row,
+                "title": "일별 AI 비용",
+            },
+        )

@@ -15,6 +15,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { AudioManager } from 'react-native-audio-api';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomSheet } from '@/components/bottom-sheet';
@@ -23,6 +25,8 @@ import { JoinMeetingSheet } from '@/components/join-meeting-sheet';
 import { ProjectSelectSheet } from '@/components/project-select-sheet';
 import { Brand, Spacing } from '@/constants/theme';
 import { Document } from '@/lib/documents';
+import { logEvent } from '@/lib/firebase';
+import i18n from '@/lib/i18n';
 import { consumePendingCreatedProject, Project } from '@/lib/projects';
 import { cancelDraftRoom, createDraftRoom, createRoom, startRoom } from '@/lib/rooms';
 
@@ -40,12 +44,16 @@ function formatRoomCode(code: string): string {
 }
 
 function formatDateField(date: Date): string {
-  return `${date.getFullYear()}년 ${date.getMonth() + 1}월 ${date.getDate()}일`;
+  return i18n.t('main.dateLabel', {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+    day: date.getDate(),
+  });
 }
 
 function formatTimeField(date: Date): string {
   const hour24 = date.getHours();
-  const period = hour24 < 12 ? '오전' : '오후';
+  const period = hour24 < 12 ? i18n.t('createMeeting.am') : i18n.t('createMeeting.pm');
   const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
   const minute = String(date.getMinutes()).padStart(2, '0');
   return `${period} ${hour12}:${minute}`;
@@ -66,6 +74,7 @@ function combineTime(time: Date, timePart: Date): Date {
 // Create Meeting PRD v1.0.0 — Member Create MeetingRoom 화면 (SCR-C-01~07).
 export default function CreateMeetingScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
 
   const [draftId, setDraftId] = useState<string | null>(null);
   const [roomCode, setRoomCode] = useState<string | null>(null);
@@ -92,8 +101,8 @@ export default function CreateMeetingScreen() {
         setDraftId(draft.id);
         setRoomCode(draft.room_code);
       })
-      .catch(() => Alert.alert('미팅룸 코드 발급에 실패했어요. 다시 시도해주세요', '', [
-        { text: '확인', onPress: () => router.back() },
+      .catch(() => Alert.alert(t('createMeeting.draftFailed'), '', [
+        { text: t('createMeeting.confirm'), onPress: () => router.back() },
       ]))
       .finally(() => setDraftLoading(false));
   }, [router]);
@@ -112,10 +121,10 @@ export default function CreateMeetingScreen() {
 
   const handleBack = useCallback(() => {
     if (title.trim().length > 0) {
-      Alert.alert('미팅 생성을 취소할까요?', undefined, [
-        { text: '계속 작성', style: 'cancel' },
+      Alert.alert(t('createMeeting.cancelConfirm'), undefined, [
+        { text: t('createMeeting.keepEditing'), style: 'cancel' },
         {
-          text: '나가기',
+          text: t('createMeeting.exit'),
           style: 'destructive',
           onPress: () => {
             if (draftId) cancelDraftRoom(draftId);
@@ -150,28 +159,52 @@ export default function CreateMeetingScreen() {
       });
 
       const isReservation = new Date(result.scheduled_at).getTime() > Date.now();
+      logEvent('meeting_create', { room_id: result.id, is_reservation: isReservation });
       if (isReservation) {
         const label = `${formatDateField(scheduledAt)} ${formatTimeField(scheduledAt)}`;
         router.replace({
           pathname: '/main',
-          params: { reservationSnackbar: encodeURIComponent(`미팅이 예약되었어요! ${label}`) },
+          params: {
+            reservationSnackbar: encodeURIComponent(t('createMeeting.reservedSnackbar', { label })),
+            refreshMeetings: '1',
+          },
         });
       } else {
         confirmedRoom.current = { id: result.id, room_code: result.room_code, title: result.title };
         setJoinSheetVisible(true);
       }
     } catch {
-      Alert.alert('미팅 생성에 실패했어요. 다시 시도해주세요');
+      Alert.alert(t('createMeeting.createFailed'));
     } finally {
       setCreating(false);
     }
+  }
+
+  // 호스트 플로우엔 원래 마이크 권한 요청이 없었다 — join-meeting/guest-meeting-input과
+  // 달리 한 번도 권한을 안 받은 채로 live-audio-bridge가 playAndRecord 세션을 활성화하려
+  // 시도해서 크래시가 났다(2026-06-27 TestFlight build 17). 이미 허용된 경우 팝업 없이
+  // 바로 넘어가도록 check 먼저 하고, 미정 상태일 때만 요청 팝업을 띄운다.
+  async function ensureMicPermission(): Promise<boolean> {
+    const current = await AudioManager.checkRecordingPermissions();
+    if (current === 'Granted') return true;
+    if (current === 'Denied') {
+      Alert.alert(
+        t('createMeeting.micPermissionDeniedTitle'),
+        t('createMeeting.micPermissionDeniedBody'),
+      );
+      return false;
+    }
+    const requested = await AudioManager.requestRecordingPermissions();
+    return requested === 'Granted';
   }
 
   async function handleJoinConfirm() {
     if (joining || !confirmedRoom.current) return;
     setJoining(true);
     try {
+      await ensureMicPermission();
       await startRoom(confirmedRoom.current.id);
+      logEvent('meeting_start', { room_id: confirmedRoom.current.id });
       router.replace({
         pathname: '/host-live-session',
         params: {
@@ -182,7 +215,7 @@ export default function CreateMeetingScreen() {
         },
       });
     } catch {
-      Alert.alert('미팅 시작에 실패했어요', '다시 시도해주세요');
+      Alert.alert(t('createMeeting.startFailedTitle'), t('createMeeting.startFailedBody'));
     } finally {
       setJoining(false);
     }
@@ -197,7 +230,7 @@ export default function CreateMeetingScreen() {
         </Pressable>
         <View style={styles.topBarTitleRow}>
           {!!roomCode && <Text style={styles.codeAccentSmall}>{formatRoomCode(roomCode)}</Text>}
-          <Text style={styles.topBarTitle}>미팅룸 생성</Text>
+          <Text style={styles.topBarTitle}>{t('createMeeting.topBarTitle')}</Text>
         </View>
       </View>
 
@@ -212,18 +245,18 @@ export default function CreateMeetingScreen() {
               <View style={styles.header}>
                 <View style={styles.headerTitleRow}>
                   {!!roomCode && <Text style={styles.codeAccent}>{formatRoomCode(roomCode)}</Text>}
-                  <Text style={styles.headerTitle}>미팅룸 정보 입력</Text>
+                  <Text style={styles.headerTitle}>{t('createMeeting.headerTitle')}</Text>
                 </View>
-                <Text style={styles.headerSubtitle}>위 6자리 코드로 만들어지는 미팅룸 생성 정보를 입력하세요</Text>
+                <Text style={styles.headerSubtitle}>{t('createMeeting.headerSubtitle')}</Text>
               </View>
 
               <View style={styles.field}>
-                <Text style={styles.label}>미팅 주제</Text>
+                <Text style={styles.label}>{t('createMeeting.titleLabel')}</Text>
                 <View style={[styles.textArea, styles.textAreaActive]}>
                   <TextInput
                     value={title}
                     onChangeText={(text) => setTitle(text.slice(0, TITLE_MAX))}
-                    placeholder="미팅 주제를 입력해주세요"
+                    placeholder={t('createMeeting.titlePlaceholder')}
                     placeholderTextColor={Brand.textDisabled}
                     style={styles.input}
                     editable={!creating}
@@ -234,18 +267,18 @@ export default function CreateMeetingScreen() {
                     </Pressable>
                   )}
                 </View>
-                <Text style={styles.helperText}>미팅 주제를 간단히 입력해주세요</Text>
+                <Text style={styles.helperText}>{t('createMeeting.titleHelper')}</Text>
               </View>
 
               <View style={styles.dateTimeRow}>
                 <Pressable style={styles.dateTimeField} onPress={() => setPickerMode('date')}>
-                  <Text style={styles.label}>미팅 시작 날짜</Text>
+                  <Text style={styles.label}>{t('createMeeting.dateLabel')}</Text>
                   <View style={[styles.textArea, styles.textAreaActive]}>
                     <Text style={styles.input}>{formatDateField(scheduledAt)}</Text>
                   </View>
                 </Pressable>
                 <Pressable style={styles.dateTimeField} onPress={() => setPickerMode('time')}>
-                  <Text style={styles.label}>미팅 시작 시간</Text>
+                  <Text style={styles.label}>{t('createMeeting.timeLabel')}</Text>
                   <View style={[styles.textArea, styles.textAreaActive]}>
                     <Text style={styles.input}>{formatTimeField(scheduledAt)}</Text>
                   </View>
@@ -253,34 +286,34 @@ export default function CreateMeetingScreen() {
               </View>
 
               <Pressable style={styles.dropdownField} onPress={() => setProjectSheetVisible(true)}>
-                <Text style={styles.label}>프로젝트 선택</Text>
+                <Text style={styles.label}>{t('createMeeting.projectLabel')}</Text>
                 <View style={styles.dropdownTextArea}>
                   <Text style={[styles.dropdownValue, !project && styles.placeholderText]} numberOfLines={1}>
-                    {project?.name ?? '프로젝트를 선택해주세요 (선택)'}
+                    {project?.name ?? t('createMeeting.projectPlaceholder')}
                   </Text>
                   <Text style={styles.dropdownArrow}>▾</Text>
                 </View>
-                <Text style={styles.helperTextAccent}>선택한 프로젝트의 지시사항과 자료가 통역에 자동 반영돼요</Text>
+                <Text style={styles.helperTextAccent}>{t('createMeeting.projectHelper')}</Text>
               </Pressable>
 
               <Pressable style={styles.dropdownField} onPress={() => setDocumentSheetVisible(true)}>
-                <Text style={styles.label}>미팅 자료 선택</Text>
+                <Text style={styles.label}>{t('createMeeting.documentLabel')}</Text>
                 <View style={styles.dropdownTextArea}>
                   <Text style={[styles.dropdownValue, !document && styles.placeholderText]} numberOfLines={1}>
-                    {document?.title ?? '자료를 선택해주세요 (선택)'}
+                    {document?.title ?? t('createMeeting.documentPlaceholder')}
                   </Text>
                   <Text style={styles.dropdownArrow}>▾</Text>
                 </View>
-                <Text style={styles.helperTextAccent}>오늘 미팅에서 다룰 자료를 골라주세요. AI가 내용을 참고하며 통역해요</Text>
+                <Text style={styles.helperTextAccent}>{t('createMeeting.documentHelper')}</Text>
               </Pressable>
 
               <View style={styles.field}>
-                <Text style={styles.label}>미팅룸 비밀번호 (선택)</Text>
+                <Text style={styles.label}>{t('createMeeting.passwordLabel')}</Text>
                 <View style={styles.textArea}>
                   <TextInput
                     value={password}
                     onChangeText={(text) => setPassword(text.replace(/[^0-9]/g, '').slice(0, 8))}
-                    placeholder="미팅 비밀번호를 입력해주세요 (선택)"
+                    placeholder={t('createMeeting.passwordPlaceholder')}
                     placeholderTextColor={Brand.textDisabled}
                     style={styles.input}
                     keyboardType="number-pad"
@@ -289,7 +322,7 @@ export default function CreateMeetingScreen() {
                   />
                 </View>
                 <Text style={styles.helperText}>
-                  {password.length > 0 && !passwordValid ? '숫자 4자리 이상 입력해주세요' : '설정하지 않으면 코드만으로 참가할 수 있어요'}
+                  {password.length > 0 && !passwordValid ? t('createMeeting.passwordTooShort') : t('createMeeting.passwordHelper')}
                 </Text>
               </View>
             </>
@@ -305,7 +338,7 @@ export default function CreateMeetingScreen() {
               <ActivityIndicator color="white" />
             ) : (
               <Text style={[styles.primaryButtonLabel, (!formValid || draftLoading) && styles.primaryButtonLabelDisabled]}>
-                생성하기
+                {t('createMeeting.createButton')}
               </Text>
             )}
           </Pressable>
@@ -323,7 +356,7 @@ export default function CreateMeetingScreen() {
             onChange={handleDateTimeChange}
           />
           <Pressable style={styles.pickerDoneButton} onPress={() => setPickerMode(null)}>
-            <Text style={styles.pickerDoneButtonLabel}>완료</Text>
+            <Text style={styles.pickerDoneButtonLabel}>{t('createMeeting.done')}</Text>
           </Pressable>
         </BottomSheet>
       ) : (

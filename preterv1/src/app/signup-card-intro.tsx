@@ -1,13 +1,57 @@
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SignupProgressBar } from '@/components/signup-progress-bar';
 import { Brand, Spacing } from '@/constants/theme';
+import { BusinessCardApiError, scanBusinessCard } from '@/lib/business-card';
+import { updateSignupDraft } from '@/lib/signup-draft';
 
 export default function SignupCardIntroScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
+  const [scanning, setScanning] = useState(false);
+
+  async function handleScanCard() {
+    if (scanning) return;
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(t('signupCardIntro.cameraPermissionTitle'), t('signupCardIntro.cameraPermissionBody'));
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({ quality: 0.9, allowsEditing: true });
+    if (result.canceled || !result.assets[0]) return;
+
+    setScanning(true);
+    try {
+      const parsed = await scanBusinessCard(result.assets[0].uri);
+      // 명함에서 못 읽은 필드는 키 자체를 안 넣어야 한다 — undefined를 넣으면
+      // updateSignupDraft의 {...draft, ...partial} 스프레드가 기존 값을 덮어써 지워버린다.
+      const patch: Record<string, string> = {};
+      if (parsed.name) patch.name = parsed.name;
+      if (parsed.company_email) patch.companyEmail = parsed.company_email;
+      if (parsed.phone) patch.phone = parsed.phone.replace(/\D/g, '');
+      if (parsed.company_name) patch.companyName = parsed.company_name;
+      if (parsed.position) patch.position = parsed.position;
+      updateSignupDraft(patch);
+      if (!parsed.name && !parsed.company_email && !parsed.phone) {
+        Alert.alert(t('signupCardIntro.scanFailedTitle'), t('signupCardIntro.enterManually'));
+      }
+      router.push('/signup-form');
+    } catch (err) {
+      if (err instanceof BusinessCardApiError && err.code === 'NETWORK_ERROR') {
+        Alert.alert(t('common.networkError'));
+      } else {
+        Alert.alert(t('signupCardIntro.scanFailedTitle'), t('signupCardIntro.enterManually'));
+      }
+    } finally {
+      setScanning(false);
+    }
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -16,7 +60,7 @@ export default function SignupCardIntroScreen() {
         <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backButton}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
-        <Text style={styles.topBarTitle}>회원가입</Text>
+        <Text style={styles.topBarTitle}>{t('signupCardIntro.topBarTitle')}</Text>
       </View>
 
       <SignupProgressBar step={1} total={3} />
@@ -25,27 +69,34 @@ export default function SignupCardIntroScreen() {
         <View style={styles.cardIllustration}>
           <View style={styles.cardBack} />
           <View style={styles.card}>
-            <Text style={styles.cardName}>김민준</Text>
-            <Text style={styles.cardMeta}>수출팀 팀장</Text>
-            <Text style={styles.cardMeta}>㈜ 한국무역</Text>
-            <Text style={styles.cardEmail}>kim@hankook.co.kr</Text>
+            <Text style={styles.cardName}>{t('signupCardIntro.sampleCardName')}</Text>
+            <Text style={styles.cardMeta}>{t('signupCardIntro.sampleCardPosition')}</Text>
+            <Text style={styles.cardMeta}>{t('signupCardIntro.sampleCardCompany')}</Text>
+            <Text style={styles.cardEmail}>{t('signupCardIntro.sampleCardEmail')}</Text>
           </View>
         </View>
 
-        <Text style={styles.title}>명함을 촬영해주세요</Text>
-        <Text style={styles.subtitle}>
-          명함을 스캔하면 회원 정보를{'\n'}자동으로 입력해드려요
-        </Text>
+        <Text style={styles.title}>{t('signupCardIntro.title')}</Text>
+        <Text style={styles.subtitle}>{t('signupCardIntro.subtitle')}</Text>
       </View>
 
       <View style={styles.buttonGroup}>
         <Pressable
           style={styles.primaryButton}
-          onPress={() => Alert.alert('준비 중', '명함 스캔 기능은 곧 제공될 예정이에요.')}>
-          <Text style={styles.primaryButtonLabel}>명함 스캔하기</Text>
+          disabled={scanning}
+          onPress={handleScanCard}
+          accessibilityRole="button">
+          {scanning ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text style={styles.primaryButtonLabel}>{t('signupCardIntro.scanButton')}</Text>
+          )}
         </Pressable>
-        <Pressable style={styles.secondaryButton} onPress={() => router.push('/signup-form')}>
-          <Text style={styles.secondaryButtonLabel}>직접 정보 입력하기</Text>
+        <Pressable
+          style={styles.secondaryButton}
+          disabled={scanning}
+          onPress={() => router.push('/signup-form')}>
+          <Text style={styles.secondaryButtonLabel}>{t('signupCardIntro.manualButton')}</Text>
         </Pressable>
       </View>
     </SafeAreaView>

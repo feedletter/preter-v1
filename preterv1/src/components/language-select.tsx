@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { Brand } from '@/constants/theme';
 
@@ -19,13 +20,14 @@ type LanguageSelectProps = {
 };
 
 export function LanguageSelect({ value, onChange, disabled }: LanguageSelectProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const selected = LANGUAGES.find((lang) => lang.code === value) ?? LANGUAGES[0];
 
   return (
     <View style={styles.container}>
       <View style={styles.labelRow}>
-        <Text style={styles.label}>주 사용 언어</Text>
+        <Text style={styles.label}>{t('languageSelect.label')}</Text>
         <View style={styles.requiredDot} />
       </View>
       <Pressable
@@ -37,7 +39,7 @@ export function LanguageSelect({ value, onChange, disabled }: LanguageSelectProp
         </Text>
         <Text style={styles.chevron}>▾</Text>
       </Pressable>
-      <Text style={styles.helperText}>통역에 사용할 기본 언어를 선택해주세요</Text>
+      <Text style={styles.helperText}>{t('languageSelect.helper')}</Text>
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.overlay} onPress={() => setOpen(false)}>

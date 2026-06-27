@@ -3,6 +3,7 @@
 PRD: Preter Guest Entry v1.0.0, 4장(예외처리) / 7.1/7.2.
 """
 
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -48,6 +49,11 @@ def _active_participant_count(room_id: str) -> int:
 
 @router.post("/join", response_model=JoinResponse)
 async def join(body: JoinRequest):
+    data = await asyncio.to_thread(_join_room_as_guest, body)
+    return JoinResponse(**data)
+
+
+def _join_room_as_guest(body: JoinRequest) -> dict:
     client = get_client()
 
     room = (
@@ -120,13 +126,13 @@ async def join(body: JoinRequest):
         }
     ).execute()
 
-    return JoinResponse(
-        guest_session_token=token,
-        room_id=room_row["id"],
-        room_title=room_row["title"],
-        participants=current_count + 1,
-        expires_at=session["expires_at"],
-    )
+    return {
+        "guest_session_token": token,
+        "room_id": room_row["id"],
+        "room_title": room_row["title"],
+        "participants": current_count + 1,
+        "expires_at": session["expires_at"],
+    }
 
 
 def _require_guest_session(credentials: HTTPAuthorizationCredentials) -> dict:
@@ -139,6 +145,10 @@ def _require_guest_session(credentials: HTTPAuthorizationCredentials) -> dict:
 @router.post("/leave", status_code=204)
 async def leave(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     payload = _require_guest_session(credentials)
+    await asyncio.to_thread(_leave_guest_row, payload)
+
+
+def _leave_guest_row(payload: dict) -> None:
     client = get_client()
     client.table("meeting_participants").update(
         {"left_at": datetime.now(timezone.utc).isoformat()}
@@ -175,13 +185,11 @@ async def get_summary(
     if payload["room_id"] != room_id:
         raise HTTPException(status_code=403, detail={"error": "ROOM_MISMATCH"})
 
-    row = _get_summary_for_guest(payload)
+    row = await asyncio.to_thread(_get_summary_for_guest, payload)
     return SummaryResponse(**row)
 
 
-@router.post("/summary/resend", status_code=204)
-async def resend_summary(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
-    payload = _require_guest_session(credentials)
+def _fetch_resend_summary_context(payload: dict) -> tuple[dict, dict]:
     client = get_client()
 
     session = (
@@ -198,11 +206,24 @@ async def resend_summary(credentials: HTTPAuthorizationCredentials = Depends(bea
     room = (
         client.table("meeting_rooms").select("title").eq("id", session.data["room_id"]).single().execute()
     )
+    return session.data, {**summary_row, "room_title": room.data["title"] if room.data else None}
+
+
+def _mark_summary_sent_row(guest_session_id: str) -> None:
+    get_client().table("guest_sessions").update({"summary_sent": True}).eq(
+        "id", guest_session_id
+    ).execute()
+
+
+@router.post("/summary/resend", status_code=204)
+async def resend_summary(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+    payload = _require_guest_session(credentials)
+    session_data, summary_row = await asyncio.to_thread(_fetch_resend_summary_context, payload)
 
     try:
         sent = send_meeting_summary_email(
-            to_email=session.data["email"],
-            room_title=room.data["title"] if room.data else None,
+            to_email=session_data["email"],
+            room_title=summary_row["room_title"],
             summary_text=summary_row["summary_text"],
             action_items=summary_row["action_items"] or [],
         )
@@ -210,6 +231,4 @@ async def resend_summary(credentials: HTTPAuthorizationCredentials = Depends(bea
         raise HTTPException(status_code=502, detail={"error": "EMAIL_SEND_FAILED"})
 
     if sent:
-        client.table("guest_sessions").update({"summary_sent": True}).eq(
-            "id", payload["guest_session_id"]
-        ).execute()
+        await asyncio.to_thread(_mark_summary_sent_row, payload["guest_session_id"])

@@ -3,6 +3,7 @@
 PRD: Preter Guest Entry v1.0.0, 7.1/7.3.
 """
 
+import asyncio
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,6 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from app.core import auth_service
+from app.core.meeting_summary import finalize_meeting
 from app.core.room_state import room_manager
 from app.core.supabase_client import get_client
 
@@ -156,7 +158,11 @@ async def create_draft_room(credentials: HTTPAuthorizationCredentials = Depends(
     되지 않으면 만료 처리된다 (expires_at 기준, 별도 cleanup 작업에서 정리).
     """
     host_user_id = _require_user_id(credentials)
+    room = await asyncio.to_thread(_create_draft_room_row, host_user_id)
+    return DraftRoomResponse(id=room["id"], room_code=room["room_code"], status=room["status"])
 
+
+def _create_draft_room_row(host_user_id: str) -> dict:
     from datetime import datetime, timedelta, timezone
 
     room_code = _generate_unique_room_code()
@@ -167,8 +173,7 @@ async def create_draft_room(credentials: HTTPAuthorizationCredentials = Depends(
         "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
     }
     result = get_client().table("meeting_rooms").insert(row).execute()
-    room = result.data[0]
-    return DraftRoomResponse(id=room["id"], room_code=room["room_code"], status=room["status"])
+    return result.data[0]
 
 
 @router.delete("/draft/{room_id}", status_code=204)
@@ -176,6 +181,10 @@ async def cancel_draft_room(
     room_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
 ):
     host_user_id = _require_user_id(credentials)
+    await asyncio.to_thread(_cancel_draft_room_row, room_id, host_user_id)
+
+
+def _cancel_draft_room_row(room_id: str, host_user_id: str) -> None:
     room = (
         get_client()
         .table("meeting_rooms")
@@ -200,9 +209,23 @@ async def create_room(
 ):
     """Create Meeting PRD 6.1 — draft 미팅룸을 실제 입력값으로 확정한다."""
     host_user_id = _require_user_id(credentials)
-    _require_room_host(body.draft_id, host_user_id)
+    room = await asyncio.to_thread(_confirm_room_row, body, host_user_id)
 
+    return ConfirmRoomResponse(
+        id=room["id"],
+        room_code=room["room_code"],
+        title=room["title"],
+        scheduled_at=room["scheduled_at"],
+        status=room["status"],
+        project_id=room["project_id"],
+        document_id=room["document_id"],
+    )
+
+
+def _confirm_room_row(body: ConfirmRoomRequest, host_user_id: str) -> dict:
     from datetime import datetime, timedelta, timezone
+
+    _require_room_host(body.draft_id, host_user_id)
 
     row = {
         "title": body.title,
@@ -219,26 +242,34 @@ async def create_room(
     result = (
         get_client().table("meeting_rooms").update(row).eq("id", body.draft_id).execute()
     )
-    room = result.data[0]
-
-    return ConfirmRoomResponse(
-        id=room["id"],
-        room_code=room["room_code"],
-        title=room["title"],
-        scheduled_at=room["scheduled_at"],
-        status=room["status"],
-        project_id=room["project_id"],
-        document_id=room["document_id"],
-    )
+    return result.data[0]
 
 
 @router.patch("/{room_id}/start", response_model=RoomResponse)
 async def start_room(room_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     """Create Meeting PRD 3.3.3 — 이어폰 확인 후 즉시 입장 시작."""
     host_user_id = _require_user_id(credentials)
-    _require_room_host(room_id, host_user_id)
+    room = await asyncio.to_thread(_start_room_row, room_id, host_user_id)
 
+    # Guest Live Session PRD 1.3/3.2 — waiting 상태로 먼저 입장해 대기 중인 게스트에게
+    # 호스트 시작을 즉시 알려 MUTED로 자동 전환시킨다.
+    live_room = room_manager.get(room_id)
+    if live_room is not None:
+        await live_room.set_status("active", started_at=room["started_at"])
+
+    return RoomResponse(
+        id=room["id"],
+        room_code=room["room_code"],
+        title=room["title"],
+        status=room["status"],
+        max_participants=room["max_participants"],
+    )
+
+
+def _start_room_row(room_id: str, host_user_id: str) -> dict:
     from datetime import datetime, timezone
+
+    _require_room_host(room_id, host_user_id)
 
     result = (
         get_client()
@@ -258,61 +289,73 @@ async def start_room(room_id: str, credentials: HTTPAuthorizationCredentials = D
         .execute()
     )
     if not existing_participant.data:
+        # 멤버 등록(_register_participant_row)과 동일하게 users.name을 실제 표시 이름으로
+        # 쓴다 — 이전엔 "Host"를 그대로 박아서 talk pill/사이드바에 호스트 실명 대신
+        # 리터럴 "Host"가 보이는 버그가 있었다.
+        profile = get_client().table("users").select("name").eq("id", host_user_id).execute()
+        host_display_name = (profile.data[0]["name"] if profile.data else None) or "Host"
         get_client().table("meeting_participants").insert(
             {
                 "room_id": room_id,
                 "user_id": host_user_id,
-                "display_name": "Host",
+                "display_name": host_display_name,
                 "role": "host",
                 "language": room["primary_language"],
             }
         ).execute()
 
-    # Guest Live Session PRD 1.3/3.2 — waiting 상태로 먼저 입장해 대기 중인 게스트에게
-    # 호스트 시작을 즉시 알려 MUTED로 자동 전환시킨다.
-    live_room = room_manager.get(room_id)
-    if live_room is not None:
-        await live_room.set_status("active")
-
-    return RoomResponse(
-        id=room["id"],
-        room_code=room["room_code"],
-        title=room["title"],
-        status=room["status"],
-        max_participants=room["max_participants"],
-    )
+    return room
 
 
 @router.delete("/{room_id}/end", status_code=204)
 async def end_room(room_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     """Host Live Session PRD 8.1 — 호스트가 미팅을 종료한다."""
     host_user_id = _require_user_id(credentials)
-    _require_room_host(room_id, host_user_id)
+    live_room = room_manager.get(room_id)
+    host_name = await asyncio.to_thread(
+        _end_room_row, room_id, host_user_id, live_room is not None
+    )
 
+    if live_room is not None:
+        await live_room.end_room(host_name)
+        blocks = live_room.pop_session_buffer()
+        # After Meeting PRD 6-3/8-1 — speaker_blocks 적재 + AI 요약 생성은 응답을 막지
+        # 않게 fire-and-forget으로 띄운다(요약 생성은 수 초~수십 초 걸릴 수 있음).
+        asyncio.create_task(finalize_meeting(room_id, blocks))
+
+
+def _end_room_row(room_id: str, host_user_id: str, need_host_name: bool) -> str | None:
     from datetime import datetime, timezone
+
+    _require_room_host(room_id, host_user_id)
 
     get_client().table("meeting_rooms").update(
         {"status": "ended", "ended_at": datetime.now(timezone.utc).isoformat()}
     ).eq("id", room_id).execute()
 
-    live_room = room_manager.get(room_id)
-    if live_room is not None:
-        host_participant = (
-            get_client()
-            .table("meeting_participants")
-            .select("display_name")
-            .eq("room_id", room_id)
-            .eq("user_id", host_user_id)
-            .execute()
-        )
-        host_name = host_participant.data[0]["display_name"] if host_participant.data else "Host"
-        await live_room.end_room(host_name)
+    if not need_host_name:
+        return None
+
+    host_participant = (
+        get_client()
+        .table("meeting_participants")
+        .select("display_name")
+        .eq("room_id", room_id)
+        .eq("user_id", host_user_id)
+        .execute()
+    )
+    return host_participant.data[0]["display_name"] if host_participant.data else "Host"
 
 
 @router.get("/{room_id}", response_model=RoomDetailResponse)
 async def get_room_detail(room_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     """Host Live Session PRD 9.4 — 참가자 사이드바에서 미팅 코드/비밀번호를 다시 조회."""
     host_user_id = _require_user_id(credentials)
+    data = await asyncio.to_thread(_get_room_detail_row, room_id, host_user_id)
+    return RoomDetailResponse(**data)
+
+
+def _get_room_detail_row(room_id: str, host_user_id: str) -> dict:
     _require_room_host(room_id, host_user_id)
 
     result = (
@@ -323,7 +366,7 @@ async def get_room_detail(room_id: str, credentials: HTTPAuthorizationCredential
         .single()
         .execute()
     )
-    return RoomDetailResponse(**result.data)
+    return result.data
 
 
 @router.get("/{room_id}/participants", response_model=list[ParticipantResponse])
@@ -331,6 +374,11 @@ async def list_participants(
     room_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
 ):
     host_user_id = _require_user_id(credentials)
+    rows = await asyncio.to_thread(_list_participants_rows, room_id, host_user_id)
+    return [ParticipantResponse(**row) for row in rows]
+
+
+def _list_participants_rows(room_id: str, host_user_id: str) -> list[dict]:
     _require_room_host(room_id, host_user_id)
 
     result = (
@@ -344,7 +392,7 @@ async def list_participants(
         .order("joined_at")
         .execute()
     )
-    return [ParticipantResponse(**row) for row in result.data]
+    return result.data
 
 
 @router.delete("/{room_id}/participants/{participant_id}", status_code=204)
@@ -354,9 +402,20 @@ async def kick_participant(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ):
     host_user_id = _require_user_id(credentials)
-    _require_room_host(room_id, host_user_id)
+    kicked_user_id = await asyncio.to_thread(
+        _kick_participant_row, room_id, participant_id, host_user_id
+    )
 
+    # Host Live Session PRD 9.3 — 강퇴 당한 유저의 WebSocket을 즉시 강제 종료한다.
+    live_room = room_manager.get(room_id)
+    if live_room is not None and kicked_user_id:
+        await live_room.force_disconnect(str(kicked_user_id), {"type": "PARTICIPANT_KICKED"})
+
+
+def _kick_participant_row(room_id: str, participant_id: str, host_user_id: str) -> str | None:
     from datetime import datetime, timezone
+
+    _require_room_host(room_id, host_user_id)
 
     client = get_client()
     participant = (
@@ -375,12 +434,7 @@ async def kick_participant(
         {"is_kicked": True, "left_at": datetime.now(timezone.utc).isoformat()}
     ).eq("id", participant_id).execute()
 
-    # Host Live Session PRD 9.3 — 강퇴 당한 유저의 WebSocket을 즉시 강제 종료한다.
-    live_room = room_manager.get(room_id)
-    if live_room is not None:
-        kicked_user_id = participant.data[0]["user_id"] or participant.data[0]["guest_session_id"]
-        if kicked_user_id:
-            await live_room.force_disconnect(str(kicked_user_id), {"type": "PARTICIPANT_KICKED"})
+    return participant.data[0]["user_id"] or participant.data[0]["guest_session_id"]
 
 
 def _load_room_by_code(code: str) -> dict:
@@ -402,6 +456,11 @@ def _load_room_by_code(code: str) -> dict:
 
 @router.get("/{code}/validate", response_model=ValidateRoomResponse)
 async def validate_room(code: str):
+    data = await asyncio.to_thread(_validate_room_data, code)
+    return ValidateRoomResponse(**data)
+
+
+def _validate_room_data(code: str) -> dict:
     room_row = _load_room_by_code(code)
     client = get_client()
 
@@ -413,16 +472,16 @@ async def validate_room(code: str):
         .execute()
     )
 
-    return ValidateRoomResponse(
-        valid=True,
-        room_id=room_row["id"],
-        title=room_row["title"],
-        has_password=bool(room_row["password"]),
-        status=room_row["status"],
-        scheduled_at=room_row["scheduled_at"],
-        participant_count=participant_count.count or 0,
-        max_participants=room_row["max_participants"],
-    )
+    return {
+        "valid": True,
+        "room_id": room_row["id"],
+        "title": room_row["title"],
+        "has_password": bool(room_row["password"]),
+        "status": room_row["status"],
+        "scheduled_at": room_row["scheduled_at"],
+        "participant_count": participant_count.count or 0,
+        "max_participants": room_row["max_participants"],
+    }
 
 
 @router.post("/{code}/join", response_model=MemberJoinResponse)
@@ -436,22 +495,7 @@ async def join_room_as_member(
     미팅을 시작할 때(해당 시점 재진입) 등록된다 (Create PRD §3.2/6.1과 동일한 지연 등록 패턴).
     """
     _require_user_id(credentials)
-    client = get_client()
-    room_row = _load_room_by_code(code)
-
-    current_count = (
-        client.table("meeting_participants")
-        .select("id", count="exact")
-        .eq("room_id", room_row["id"])
-        .is_("left_at", "null")
-        .execute()
-    )
-    if (current_count.count or 0) >= room_row["max_participants"]:
-        raise HTTPException(status_code=409, detail={"error": "ROOM_FULL"})
-
-    if room_row["password"]:
-        if not body.password or body.password != room_row["password"]:
-            raise HTTPException(status_code=401, detail={"error": "WRONG_PASSWORD"})
+    room_row = await asyncio.to_thread(_join_room_as_member_row, code, body)
 
     if room_row["status"] == "waiting":
         return MemberJoinResponse(
@@ -469,6 +513,27 @@ async def join_room_as_member(
     )
 
 
+def _join_room_as_member_row(code: str, body: MemberJoinRequest) -> dict:
+    client = get_client()
+    room_row = _load_room_by_code(code)
+
+    current_count = (
+        client.table("meeting_participants")
+        .select("id", count="exact")
+        .eq("room_id", room_row["id"])
+        .is_("left_at", "null")
+        .execute()
+    )
+    if (current_count.count or 0) >= room_row["max_participants"]:
+        raise HTTPException(status_code=409, detail={"error": "ROOM_FULL"})
+
+    if room_row["password"]:
+        if not body.password or body.password != room_row["password"]:
+            raise HTTPException(status_code=401, detail={"error": "WRONG_PASSWORD"})
+
+    return room_row
+
+
 @router.post("/{room_id}/participants", response_model=RegisterParticipantResponse)
 async def register_participant(
     room_id: str,
@@ -477,6 +542,11 @@ async def register_participant(
 ):
     """Member Join MeetingRoom PRD 4.3 — 이어폰 확인 후 멤버를 참가자로 등록한다."""
     user_id = _require_user_id(credentials)
+    participant_id = await asyncio.to_thread(_register_participant_row, room_id, body, user_id)
+    return RegisterParticipantResponse(id=participant_id)
+
+
+def _register_participant_row(room_id: str, body: RegisterParticipantRequest, user_id: str) -> str:
     client = get_client()
 
     room = client.table("meeting_rooms").select("id, status").eq("id", room_id).execute()
@@ -496,7 +566,7 @@ async def register_participant(
         client.table("meeting_participants").update(
             {"left_at": None, "audio_enabled": body.audio_enabled, "language": body.language}
         ).eq("id", existing.data[0]["id"]).execute()
-        return RegisterParticipantResponse(id=existing.data[0]["id"])
+        return existing.data[0]["id"]
 
     profile = client.table("users").select("name").eq("id", user_id).execute()
     display_name = (profile.data[0]["name"] if profile.data else None) or "Member"
@@ -515,7 +585,7 @@ async def register_participant(
         )
         .execute()
     )
-    return RegisterParticipantResponse(id=result.data[0]["id"])
+    return result.data[0]["id"]
 
 
 @router.post("/{room_id}/leave", status_code=204)
@@ -524,6 +594,10 @@ async def leave_room_as_member(
 ):
     """Member Join MeetingRoom PRD §5 — 멤버 본인 퇴장(미팅 종료 권한 없음)."""
     user_id = _require_user_id(credentials)
+    await asyncio.to_thread(_leave_room_as_member_row, room_id, user_id)
+
+
+def _leave_room_as_member_row(room_id: str, user_id: str) -> None:
     from datetime import datetime, timezone
 
     get_client().table("meeting_participants").update(

@@ -1,5 +1,7 @@
 """Profile & Settings PRD 6장 / 8.2 — 앱 문제 신고."""
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
@@ -44,6 +46,11 @@ async def create_report(
     if len(body.body.strip()) < 10:
         raise HTTPException(status_code=400, detail={"error": "BODY_TOO_SHORT"})
 
+    created = await asyncio.to_thread(_insert_report_row, user_id, body)
+    return CreateReportResponse(id=created["id"], created_at=created["created_at"])
+
+
+def _insert_report_row(user_id: str, body: CreateReportRequest) -> dict:
     row = {
         "user_id": user_id,
         "category": body.category,
@@ -52,5 +59,4 @@ async def create_report(
         "app_version": body.app_version,
     }
     result = get_client().table("reports").insert(row).execute()
-    created = result.data[0]
-    return CreateReportResponse(id=created["id"], created_at=created["created_at"])
+    return result.data[0]

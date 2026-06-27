@@ -1,4 +1,4 @@
-import { AudioModule } from 'expo-audio';
+import { AudioManager } from 'react-native-audio-api';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
@@ -14,6 +14,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CodeInput } from '@/components/code-input';
@@ -21,14 +22,15 @@ import { EarphoneCheckSheet } from '@/components/earphone-check-sheet';
 import { GuestLanguage, LanguageSelect } from '@/components/language-select';
 import { TextField } from '@/components/text-field';
 import { Brand, Spacing } from '@/constants/theme';
+import { logEvent } from '@/lib/firebase';
 import { GuestApiError, joinRoom, validateRoom } from '@/lib/guest';
-
-const CODE_NOT_FOUND_MESSAGE = '존재하지 않는 미팅 코드예요. 코드를 다시 확인해주세요.';
 
 type Step = 'code' | 'details';
 
 export default function GuestMeetingInputScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
+  const CODE_NOT_FOUND_MESSAGE = t('guestMeetingInput.codeNotFound');
   const [step, setStep] = useState<Step>('code');
   const [code, setCode] = useState('');
   const [checking, setChecking] = useState(false);
@@ -101,16 +103,16 @@ export default function GuestMeetingInputScreen() {
           case 'ROOM_ENDED':
           case 'ROOM_EXPIRED':
             // E2: 종료된 미팅
-            Alert.alert('종료된 미팅이에요', '호스트가 미팅을 종료했어요.');
+            Alert.alert(t('guestMeetingInput.roomEndedTitle'), t('guestMeetingInput.roomEndedBody'));
             break;
           case 'NETWORK_ERROR':
-            Alert.alert('네트워크 연결을 확인해주세요');
+            Alert.alert(t('common.networkError'));
             break;
           default:
-            Alert.alert('미팅 코드를 확인할 수 없어요. 잠시 후 다시 시도해주세요.');
+            Alert.alert(t('guestMeetingInput.validateFailed'));
         }
       } else {
-        Alert.alert('미팅 코드를 확인할 수 없어요. 잠시 후 다시 시도해주세요.');
+        Alert.alert(t('guestMeetingInput.validateFailed'));
       }
     } finally {
       setChecking(false);
@@ -143,13 +145,15 @@ export default function GuestMeetingInputScreen() {
     if (!isDetailsValid || requestingMic) return;
     setRequestingMic(true);
     try {
-      const { granted, canAskAgain } = await AudioModule.requestRecordingPermissionsAsync();
-      if (granted) {
+      const status = await AudioManager.requestRecordingPermissions();
+      if (status === 'Granted') {
         setAudioEnabled(true);
       } else {
         // SCR-G-06 거부 동작: 오디오 토글 Off로 청취 전용 모드 진입
+        // iOS는 권한을 한번 거부하면 시스템 다이얼로그를 다시 띄우지 않으므로,
+        // 'Denied'는 곧 "다시 물어볼 수 없음(canAskAgain=false)"과 동치로 취급한다.
         setAudioEnabled(false);
-        if (!canAskAgain) {
+        if (status === 'Denied') {
           Alert.alert(
             '마이크 권한이 꺼져 있어요',
             '설정에서 마이크 권한을 허용하면 발화도 통역할 수 있어요. 지금은 청취 전용 모드로 참가해요.',
@@ -175,13 +179,14 @@ export default function GuestMeetingInputScreen() {
         email: email.trim() || undefined,
         audio_enabled: audioEnabled,
       });
+      logEvent('meeting_join', { method: 'guest', room_id: result.room_id });
       setShowEarphoneSheet(false);
       router.replace({
         pathname: '/guest-live-session',
         params: {
           room_id: result.room_id,
           room_code: code,
-          title: result.room_title ?? '미팅',
+          title: result.room_title ?? t('main.untitledMeeting'),
           status: roomStatus,
           my_name: displayName.trim(),
           my_language: language,
@@ -198,33 +203,33 @@ export default function GuestMeetingInputScreen() {
           case 'ROOM_FULL':
             // E3: 정원 초과
             setShowEarphoneSheet(false);
-            Alert.alert('미팅 정원이 가득 찼어요', '호스트에게 문의해주세요.');
+            Alert.alert(t('guestMeetingInput.roomFullTitle'), t('guestMeetingInput.roomFullBody'));
             break;
           case 'ROOM_ENDED':
             setShowEarphoneSheet(false);
-            Alert.alert('종료된 미팅이에요', '호스트가 미팅을 종료했어요.');
+            Alert.alert(t('guestMeetingInput.roomEndedTitle'), t('guestMeetingInput.roomEndedBody'));
             handleBackToCode();
             break;
           case 'ROOM_NOT_STARTED': {
             // E1: 시작 전 미팅 — 카운트다운 후 자동 재시도, 시트는 유지
             const scheduledAt = (err.detail.scheduled_at as string) ?? null;
             if (!options?.silent) {
-              Alert.alert('아직 시작되지 않은 미팅이에요', '시작 시간까지 자동으로 기다릴게요.');
+              Alert.alert(t('guestMeetingInput.roomNotStartedTitle'), t('guestMeetingInput.roomNotStartedBody'));
             }
             if (scheduledAt) startCountdown(scheduledAt);
             break;
           }
           case 'NETWORK_ERROR':
             setShowEarphoneSheet(false);
-            Alert.alert('네트워크 연결을 확인해주세요');
+            Alert.alert(t('common.networkError'));
             break;
           default:
             setShowEarphoneSheet(false);
-            Alert.alert('입장에 실패했어요. 잠시 후 다시 시도해주세요.');
+            Alert.alert(t('guestMeetingInput.joinFailed'));
         }
       } else {
         setShowEarphoneSheet(false);
-        Alert.alert('입장에 실패했어요. 잠시 후 다시 시도해주세요.');
+        Alert.alert(t('guestMeetingInput.joinFailed'));
       }
     } finally {
       setJoining(false);
@@ -241,7 +246,7 @@ export default function GuestMeetingInputScreen() {
           style={styles.backButton}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
-        <Text style={styles.topBarTitle}>미팅룸 참가</Text>
+        <Text style={styles.topBarTitle}>{t('guestMeetingInput.topBarTitle')}</Text>
       </View>
 
       <KeyboardAvoidingView
@@ -250,10 +255,8 @@ export default function GuestMeetingInputScreen() {
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           {step === 'code' ? (
             <>
-              <Text style={styles.headerTitle}>미팅룸 정보 입력</Text>
-              <Text style={styles.headerSubtitle}>
-                미팅룸 코드를 입력하고 참가자 정보를 입력해주세요
-              </Text>
+              <Text style={styles.headerTitle}>{t('guestMeetingInput.headerTitle')}</Text>
+              <Text style={styles.headerSubtitle}>{t('guestMeetingInput.codeStepSubtitle')}</Text>
 
               <View style={styles.codeWrap}>
                 <CodeInput
@@ -269,16 +272,16 @@ export default function GuestMeetingInputScreen() {
             </>
           ) : (
             <>
-              <Text style={styles.headerTitle}>미팅룸 정보 입력</Text>
-              <Text style={styles.headerSubtitle}>미팅 코드 {code}</Text>
+              <Text style={styles.headerTitle}>{t('guestMeetingInput.headerTitle')}</Text>
+              <Text style={styles.headerSubtitle}>{t('guestMeetingInput.headerSubtitle', { code })}</Text>
 
               <View style={styles.fields}>
                 <TextField
-                  label="사용자 이름"
+                  label={t('guestMeetingInput.nameLabel')}
                   required
                   value={displayName}
                   onChangeText={setDisplayName}
-                  placeholder="미팅에서 표시될 이름을 입력해주세요"
+                  placeholder={t('guestMeetingInput.namePlaceholder')}
                   returnKeyType="next"
                   editable={!joining}
                 />
@@ -286,33 +289,33 @@ export default function GuestMeetingInputScreen() {
                 <LanguageSelect value={language} onChange={setLanguage} disabled={joining} />
 
                 <TextField
-                  label="미팅룸 비밀번호"
+                  label={t('guestMeetingInput.passwordLabel')}
                   required={needsPassword}
                   value={password}
                   onChangeText={(text) => {
                     setPassword(text);
                     setPasswordError(false);
                   }}
-                  placeholder="미팅 비밀번호를 입력해주세요 (선택)"
+                  placeholder={t('guestMeetingInput.passwordPlaceholder')}
                   secureTextEntry
                   returnKeyType="next"
                   editable={!joining}
-                  error={passwordError ? '비밀번호가 올바르지 않아요' : undefined}
+                  error={passwordError ? t('guestMeetingInput.passwordError') : undefined}
                   helperText={
                     !passwordError
                       ? needsPassword
                         ? undefined
-                        : '비밀번호가 없는 미팅이에요'
+                        : t('guestMeetingInput.noPasswordHelper')
                       : undefined
                   }
                 />
 
                 <TextField
-                  label="이메일 (선택)"
+                  label={t('guestMeetingInput.emailLabel')}
                   value={email}
                   onChangeText={setEmail}
                   placeholder="jay@preter.me"
-                  helperText="미팅 후 요약을 받을 이메일 주소를 입력해주세요"
+                  helperText={t('guestMeetingInput.emailHelper')}
                   keyboardType="email-address"
                   returnKeyType="done"
                   editable={!joining}
@@ -321,8 +324,8 @@ export default function GuestMeetingInputScreen() {
 
               <View style={styles.audioRow}>
                 <View style={styles.audioText}>
-                  <Text style={styles.audioLabel}>오디오 연결</Text>
-                  <Text style={styles.audioSublabel}>마이크와 스피커를 활성화해요</Text>
+                  <Text style={styles.audioLabel}>{t('guestMeetingInput.audioLabel')}</Text>
+                  <Text style={styles.audioSublabel}>{t('guestMeetingInput.audioSublabel')}</Text>
                 </View>
                 <Switch
                   value={audioEnabled}
@@ -335,9 +338,7 @@ export default function GuestMeetingInputScreen() {
               </View>
 
               {!audioEnabled && (
-                <Text style={styles.listenOnlyHint}>
-                  오디오를 끄면 발화 없이 통역만 듣는 청취 전용 모드로 참가해요
-                </Text>
+                <Text style={styles.listenOnlyHint}>{t('guestMeetingInput.listenOnlyHint')}</Text>
               )}
 
               <Pressable
@@ -347,7 +348,7 @@ export default function GuestMeetingInputScreen() {
                 {requestingMic ? (
                   <ActivityIndicator color="white" />
                 ) : (
-                  <Text style={styles.joinButtonLabel}>입장하기</Text>
+                  <Text style={styles.joinButtonLabel}>{t('guestMeetingInput.joinButton')}</Text>
                 )}
               </Pressable>
             </>
@@ -365,7 +366,7 @@ export default function GuestMeetingInputScreen() {
         joining={joining}
         countdownText={
           waitingForStart
-            ? `미팅 시작까지 ${formatCountdown(waitingForStart.secondsLeft)} 남았어요`
+            ? t('guestMeetingInput.countdownText', { time: formatCountdown(waitingForStart.secondsLeft) })
             : undefined
         }
       />

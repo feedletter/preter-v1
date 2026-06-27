@@ -1,4 +1,5 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { BottomSheet } from '@/components/bottom-sheet';
 import { Brand } from '@/constants/theme';
@@ -18,26 +19,28 @@ export function JoinMeetingSheet({
   joining,
   onConfirm,
   onClose,
-  confirmLabel = '미팅 입장하기',
+  confirmLabel,
 }: JoinMeetingSheetProps) {
+  const { t } = useTranslation();
   return (
     <BottomSheet visible={visible} onClose={onClose} sheetStyle={styles.sheet}>
       <View style={styles.content}>
         <Text style={styles.illustration}>🎧</Text>
-        <Text style={styles.title}>이어폰이 연결되어 있나요?</Text>
-        <Text style={styles.description}>
-          정확한 동시통역 음성을 듣고 말하기 위해, 미팅 참가 전 이어폰을 착용하고 연결 상태를
-          확인해주세요.
-        </Text>
+        <Text style={styles.title}>{t('joinMeetingSheet.title')}</Text>
+        <Text style={styles.description}>{t('joinMeetingSheet.description')}</Text>
 
         <View style={styles.statusCard}>
           <Text style={styles.statusIcon}>✓</Text>
-          <Text style={styles.statusLabel}>이어폰 연결됨</Text>
-          <Text style={styles.statusValue}>정상</Text>
+          <Text style={styles.statusLabel}>{t('joinMeetingSheet.statusLabel')}</Text>
+          <Text style={styles.statusValue}>{t('joinMeetingSheet.statusValue')}</Text>
         </View>
 
         <Pressable onPress={onConfirm} disabled={joining} style={styles.confirmButton}>
-          {joining ? <ActivityIndicator color="white" /> : <Text style={styles.confirmButtonLabel}>{confirmLabel}</Text>}
+          {joining ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text style={styles.confirmButtonLabel}>{confirmLabel ?? t('joinMeetingSheet.confirmDefault')}</Text>
+          )}
         </Pressable>
       </View>
     </BottomSheet>

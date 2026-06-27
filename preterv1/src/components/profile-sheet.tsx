@@ -2,6 +2,7 @@ import { Image } from 'expo-image';
 import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Alert,
   Animated,
@@ -21,7 +22,13 @@ import { LanguageSettingSheet, ProfileLanguage } from '@/components/language-set
 import { ReportIssueSheet } from '@/components/report-issue-sheet';
 import { Brand } from '@/constants/theme';
 import { logout } from '@/lib/auth';
+import { setAppLanguage, SUPPORTED_APP_LANGUAGES } from '@/lib/i18n';
 import { MyPlan, MyProfile, updateMyProfile } from '@/lib/users';
+
+// 앱 서비스 언어는 실제 번역 리소스가 있는 언어만 선택 가능해야 한다 — 통역 언어용
+// LanguageSettingSheet가 기본으로 보여주는 5개(ko/en/ja/zh/sg) 중 zh/sg를 고르면
+// UI가 안 바뀌는 채로 DB값만 바뀌는 모순이 생기므로 SUPPORTED_APP_LANGUAGES로 제한한다.
+const APP_LANGUAGE_OPTIONS = SUPPORTED_APP_LANGUAGES as ProfileLanguage[];
 
 const HELP_CENTER_URL = 'https://docs.preter.me';
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -55,6 +62,7 @@ export function ProfileSheet({
   onProfileChange,
 }: ProfileSheetProps) {
   const router = useRouter();
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const [mounted, setMounted] = useState(visible);
   const [editVisible, setEditVisible] = useState(false);
@@ -118,13 +126,18 @@ export function ProfileSheet({
     if (!languageTarget) return;
     const updated = await updateMyProfile({ [languageTarget]: value });
     onProfileChange(updated);
+    // app_language(앱 UI 언어)를 바꾼 경우에만 즉시 i18n 전환 — primary_language(통역 언어)는
+    // UI 표시 언어와 무관하니 건드리지 않는다.
+    if (languageTarget === 'app_language') {
+      setAppLanguage(updated.app_language);
+    }
   }
 
   function handleLogout() {
-    Alert.alert('로그아웃하시겠어요?', undefined, [
-      { text: '취소', style: 'cancel' },
+    Alert.alert(t('profileSheet.logoutConfirm'), undefined, [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: '로그아웃',
+        text: t('profileSheet.logout'),
         style: 'destructive',
         onPress: async () => {
           await logout();
@@ -161,7 +174,7 @@ export function ProfileSheet({
         style={[styles.screen, { paddingTop: insets.top, transform: [{ translateX }] }]}
         {...panResponder.panHandlers}>
         <View style={styles.topRow}>
-          <Pressable onPress={onClose} hitSlop={8} accessibilityLabel="닫기" style={styles.closeButton}>
+          <Pressable onPress={onClose} hitSlop={8} accessibilityLabel={t('profileSheet.close')} style={styles.closeButton}>
             <Text style={styles.closeIcon}>✕</Text>
           </Pressable>
         </View>
@@ -178,7 +191,7 @@ export function ProfileSheet({
             <Text style={styles.name}>{profile?.name ?? ''}</Text>
             <Text style={styles.email}>{profile?.email ?? ''}</Text>
             <Pressable onPress={() => setEditVisible(true)} hitSlop={4}>
-              <Text style={styles.editLink}>프로필 수정 →</Text>
+              <Text style={styles.editLink}>{t('profileSheet.editProfile')}</Text>
             </Pressable>
           </View>
         </View>
@@ -187,14 +200,14 @@ export function ProfileSheet({
           style={styles.scrollContent}
           contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
           showsVerticalScrollIndicator={false}>
-          <Text style={styles.sectionLabel}>계정</Text>
+          <Text style={styles.sectionLabel}>{t('profileSheet.accountSection')}</Text>
           <View style={styles.group}>
             <Pressable
               style={styles.row}
               onPress={handleOpenSubscription}
               accessibilityRole="button"
-              accessibilityHint="탭하면 설정을 변경합니다">
-              <Text style={styles.rowLabel}>구독 플랜</Text>
+              accessibilityHint={t('profileSheet.tapToChangeHint')}>
+              <Text style={styles.rowLabel}>{t('profileSheet.subscriptionPlan')}</Text>
               <View style={styles.planBadge}>
                 <Text style={styles.planBadgeText}>{(plan?.plan ?? 'free').toUpperCase()}</Text>
               </View>
@@ -202,21 +215,21 @@ export function ProfileSheet({
             </Pressable>
             <View style={styles.divider} />
             <View style={styles.row}>
-              <Text style={styles.rowLabel}>사용량</Text>
+              <Text style={styles.rowLabel}>{t('profileSheet.usage')}</Text>
               <Text style={styles.rowValue}>
-                {plan ? `이번 달 ${plan.minutes_used}분 사용` : ''}
+                {plan ? t('profileSheet.usageThisMonth', { minutes: plan.minutes_used }) : ''}
               </Text>
             </View>
           </View>
 
-          <Text style={styles.sectionLabel}>언어 설정</Text>
+          <Text style={styles.sectionLabel}>{t('profileSheet.languageSection')}</Text>
           <View style={styles.group}>
             <Pressable
               style={styles.row}
               onPress={() => setLanguageTarget('primary_language')}
               accessibilityRole="button"
-              accessibilityHint="탭하면 설정을 변경합니다">
-              <Text style={styles.rowLabel}>프리터 통역 언어</Text>
+              accessibilityHint={t('profileSheet.tapToChangeHint')}>
+              <Text style={styles.rowLabel}>{t('profileSheet.interpretationLanguage')}</Text>
               <Text style={styles.rowValue}>{languageLabel(profile?.primary_language)}</Text>
               <Text style={styles.arrowIcon}>›</Text>
             </Pressable>
@@ -225,17 +238,17 @@ export function ProfileSheet({
               style={styles.row}
               onPress={() => setLanguageTarget('app_language')}
               accessibilityRole="button"
-              accessibilityHint="탭하면 설정을 변경합니다">
-              <Text style={styles.rowLabel}>앱 서비스 언어</Text>
+              accessibilityHint={t('profileSheet.tapToChangeHint')}>
+              <Text style={styles.rowLabel}>{t('profileSheet.appLanguage')}</Text>
               <Text style={styles.rowValue}>{languageLabel(profile?.app_language)}</Text>
               <Text style={styles.arrowIcon}>›</Text>
             </Pressable>
           </View>
 
-          <Text style={styles.sectionLabel}>도움말</Text>
+          <Text style={styles.sectionLabel}>{t('profileSheet.helpSection')}</Text>
           <View style={styles.group}>
             <Pressable style={styles.row} onPress={handleOpenHelpCenter} accessibilityRole="button">
-              <Text style={styles.rowLabel}>도움말 센터</Text>
+              <Text style={styles.rowLabel}>{t('profileSheet.helpCenter')}</Text>
               <Text style={styles.arrowIcon}>›</Text>
             </Pressable>
             <View style={styles.divider} />
@@ -243,18 +256,18 @@ export function ProfileSheet({
               style={styles.row}
               onPress={() => setReportVisible(true)}
               accessibilityRole="button">
-              <Text style={styles.rowLabel}>앱 문제 신고하기</Text>
+              <Text style={styles.rowLabel}>{t('profileSheet.reportIssue')}</Text>
               <Text style={styles.arrowIcon}>›</Text>
             </Pressable>
             <View style={styles.divider} />
             <Pressable style={styles.row} onPress={handleOpenInfo} accessibilityRole="button">
-              <Text style={styles.rowLabel}>정보</Text>
+              <Text style={styles.rowLabel}>{t('profileSheet.info')}</Text>
               <Text style={styles.arrowIcon}>›</Text>
             </Pressable>
           </View>
 
-          <Pressable style={styles.logoutRow} onPress={handleLogout} accessibilityLabel="로그아웃">
-            <Text style={styles.logoutLabel}>로그아웃</Text>
+          <Pressable style={styles.logoutRow} onPress={handleLogout} accessibilityLabel={t('profileSheet.logout')}>
+            <Text style={styles.logoutLabel}>{t('profileSheet.logout')}</Text>
           </Pressable>
           <Text style={styles.versionText}>Preter v1.0.0</Text>
         </ScrollView>
@@ -272,11 +285,11 @@ export function ProfileSheet({
 
       <LanguageSettingSheet
         visible={languageTarget !== null}
-        title={languageTarget === 'app_language' ? '앱 서비스 언어' : '프리터 통역 언어'}
+        title={languageTarget === 'app_language' ? t('profileSheet.appLanguage') : t('profileSheet.interpretationLanguage')}
         description={
           languageTarget === 'app_language'
-            ? '앱 서비스에 사용할 기본 언어를 선택해주세요'
-            : '미팅 세션에서 사용할 기본 언어를 선택해주세요'
+            ? t('profileSheet.appLanguageDescription')
+            : t('profileSheet.interpretationLanguageDescription')
         }
         value={
           ((languageTarget === 'app_language' ? profile?.app_language : profile?.primary_language) ??
@@ -284,6 +297,7 @@ export function ProfileSheet({
         }
         onSelect={handleSelectLanguage}
         onClose={() => setLanguageTarget(null)}
+        languageOptions={languageTarget === 'app_language' ? APP_LANGUAGE_OPTIONS : undefined}
       />
 
       <ReportIssueSheet visible={reportVisible} onClose={() => setReportVisible(false)} />

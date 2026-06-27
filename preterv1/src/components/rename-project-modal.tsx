@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { Brand } from '@/constants/theme';
 
@@ -30,9 +31,12 @@ export function RenameProjectModal({
   currentName,
   onClose,
   onConfirm,
-  title = '프로젝트 이름 변경',
-  description = '새로운 프로젝트 이름을 입력해주세요',
+  title,
+  description,
 }: RenameProjectModalProps) {
+  const { t } = useTranslation();
+  const resolvedTitle = title ?? t('renameProjectModal.title');
+  const resolvedDescription = description ?? t('renameProjectModal.description');
   const [name, setName] = useState(currentName);
   const [saving, setSaving] = useState(false);
   const scale = useRef(new Animated.Value(0.9)).current;
@@ -67,8 +71,8 @@ export function RenameProjectModal({
       <View style={styles.dim} accessibilityViewIsModal>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <Animated.View style={[styles.card, { opacity, transform: [{ scale }] }]}>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.description}>{description}</Text>
+          <Text style={styles.title}>{resolvedTitle}</Text>
+          <Text style={styles.description}>{resolvedDescription}</Text>
           <TextInput
             value={name}
             onChangeText={(text) => setName(text.slice(0, NAME_MAX))}
@@ -80,14 +84,14 @@ export function RenameProjectModal({
           <View style={styles.divider} />
           <View style={styles.buttonRow}>
             <Pressable style={styles.cancelButton} onPress={onClose} disabled={saving}>
-              <Text style={styles.cancelLabel}>취소</Text>
+              <Text style={styles.cancelLabel}>{t('common.cancel')}</Text>
             </Pressable>
             <View style={styles.buttonDivider} />
             <Pressable style={styles.confirmButton} onPress={handleConfirm} disabled={!isValid || saving}>
               {saving ? (
                 <ActivityIndicator color={Brand.primary} size="small" />
               ) : (
-                <Text style={[styles.confirmLabel, !isValid && styles.confirmLabelDisabled]}>변경</Text>
+                <Text style={[styles.confirmLabel, !isValid && styles.confirmLabelDisabled]}>{t('renameProjectModal.confirmButton')}</Text>
               )}
             </Pressable>
           </View>

@@ -11,6 +11,7 @@ import re
 import anthropic
 
 from app.config import settings
+from app.core import ai_usage
 from app.core.supabase_client import get_client
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,14 @@ def _client() -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
 
-def _parse_json_with_retry(client: anthropic.Anthropic, system_prompt: str, content: list) -> dict | None:
+def _parse_json_with_retry(
+    client: anthropic.Anthropic,
+    system_prompt: str,
+    content: list,
+    context: str,
+    document_id: str,
+    message_id: str,
+) -> dict | None:
     for attempt in range(2):
         response = client.beta.messages.create(
             model=MODEL,
@@ -57,6 +65,16 @@ def _parse_json_with_retry(client: anthropic.Anthropic, system_prompt: str, cont
             system=system_prompt,
             messages=[{"role": "user", "content": content}],
             betas=[FILES_API_BETA],
+        )
+        # 재시도 attempt도 각각 비용이 발생하므로 attempt마다 기록한다.
+        ai_usage.log_usage(
+            provider="anthropic",
+            model=MODEL,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            context=context,
+            document_id=document_id,
+            message_id=message_id,
         )
         text = next((b.text for b in response.content if b.type == "text"), "")
         try:
@@ -119,7 +137,9 @@ def analyze_file_message(document_id: str, message_id: str, file_bytes: bytes, f
             {"type": "text", "text": "이 자료를 분석해서 통역 맥락을 추출해주세요."},
         ]
 
-        parsed = _parse_json_with_retry(client, FILE_SYSTEM_PROMPT, content)
+        parsed = _parse_json_with_retry(
+            client, FILE_SYSTEM_PROMPT, content, "document_ai:file", document_id, message_id
+        )
         _save_result(document_id, message_id, parsed)
     except Exception:
         logger.exception("document_ai: 파일 분석 실패 (message_id=%s)", message_id)
@@ -131,7 +151,9 @@ def analyze_text_message(document_id: str, message_id: str, text: str) -> None:
     try:
         client = _client()
         content = [{"type": "text", "text": text}]
-        parsed = _parse_json_with_retry(client, TEXT_SYSTEM_PROMPT, content)
+        parsed = _parse_json_with_retry(
+            client, TEXT_SYSTEM_PROMPT, content, "document_ai:text", document_id, message_id
+        )
         _save_result(document_id, message_id, parsed)
     except Exception:
         logger.exception("document_ai: 텍스트 분석 실패 (message_id=%s)", message_id)

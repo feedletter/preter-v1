@@ -2,6 +2,7 @@
 Project Detail PRD 7장 — 프로젝트 상세/수정/삭제, 소속 미팅, 자료 적용, 지시사항.
 """
 
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -96,6 +97,11 @@ def _require_project(project_id: str, user_id: str) -> dict:
 @router.get("", response_model=ProjectsListResponse)
 async def list_projects(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     user_id = _require_user_id(credentials)
+    projects = await asyncio.to_thread(_fetch_projects_list, user_id)
+    return ProjectsListResponse(projects=projects)
+
+
+def _fetch_projects_list(user_id: str) -> list[ProjectResponse]:
     client = get_client()
 
     rows = (
@@ -118,7 +124,7 @@ async def list_projects(credentials: HTTPAuthorizationCredentials = Depends(bear
         )
         projects.append(ProjectResponse(**row, meeting_count=count_result.count or 0))
 
-    return ProjectsListResponse(projects=projects)
+    return projects
 
 
 @router.post("", response_model=ProjectResponse, status_code=201)
@@ -133,9 +139,7 @@ async def create_project(
     if body.description and len(body.description) > 200:
         raise HTTPException(status_code=422, detail={"error": "DESCRIPTION_TOO_LONG"})
 
-    row = {"user_id": user_id, "name": name, "description": body.description}
-    result = get_client().table("projects").insert(row).execute()
-    created = result.data[0]
+    created = await asyncio.to_thread(_create_project_row, user_id, name, body.description)
     return ProjectResponse(
         id=created["id"],
         name=created["name"],
@@ -145,9 +149,20 @@ async def create_project(
     )
 
 
+def _create_project_row(user_id: str, name: str, description: str | None) -> dict:
+    row = {"user_id": user_id, "name": name, "description": description}
+    result = get_client().table("projects").insert(row).execute()
+    return result.data[0]
+
+
 @router.get("/{project_id}", response_model=ProjectDetailResponse)
 async def get_project(project_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     user_id = _require_user_id(credentials)
+    data = await asyncio.to_thread(_fetch_project_detail, project_id, user_id)
+    return ProjectDetailResponse(**data)
+
+
+def _fetch_project_detail(project_id: str, user_id: str) -> dict:
     client = get_client()
 
     project = (
@@ -168,15 +183,15 @@ async def get_project(project_id: str, credentials: HTTPAuthorizationCredentials
     instructions = client.table("project_instructions").select("content").eq("project_id", project_id).execute()
     instruction_content = instructions.data[0]["content"] if instructions.data else None
 
-    return ProjectDetailResponse(
-        id=row["id"],
-        name=row["name"],
-        description=row["description"],
-        created_at=row["created_at"],
-        document_count=doc_count.count or 0,
-        has_instructions=instruction_content is not None,
-        instruction_content=instruction_content,
-    )
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "created_at": row["created_at"],
+        "document_count": doc_count.count or 0,
+        "has_instructions": instruction_content is not None,
+        "instruction_content": instruction_content,
+    }
 
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
@@ -186,11 +201,23 @@ async def update_project(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ):
     user_id = _require_user_id(credentials)
-    _require_project(project_id, user_id)
 
     name = body.name.strip()
     if not name or len(name) > 50:
         raise HTTPException(status_code=422, detail={"error": "INVALID_NAME"})
+
+    updated, meeting_count = await asyncio.to_thread(_update_project_row, project_id, user_id, name)
+    return ProjectResponse(
+        id=updated["id"],
+        name=updated["name"],
+        description=updated["description"],
+        created_at=updated["created_at"],
+        meeting_count=meeting_count,
+    )
+
+
+def _update_project_row(project_id: str, user_id: str, name: str) -> tuple[dict, int]:
+    _require_project(project_id, user_id)
 
     client = get_client()
     result = client.table("projects").update({"name": name}).eq("id", project_id).execute()
@@ -203,19 +230,17 @@ async def update_project(
         .is_("deleted_at", "null")
         .execute()
     )
-    return ProjectResponse(
-        id=updated["id"],
-        name=updated["name"],
-        description=updated["description"],
-        created_at=updated["created_at"],
-        meeting_count=count_result.count or 0,
-    )
+    return updated, count_result.count or 0
 
 
 @router.delete("/{project_id}", status_code=204)
 async def delete_project(project_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     """PRD 4.3/8.1: soft delete + 소속 미팅 project_id NULL화 + 연결된 자료/지시사항 행 삭제."""
     user_id = _require_user_id(credentials)
+    await asyncio.to_thread(_delete_project_row, project_id, user_id)
+
+
+def _delete_project_row(project_id: str, user_id: str) -> None:
     _require_project(project_id, user_id)
 
     client = get_client()
@@ -232,20 +257,10 @@ async def list_project_meetings(
     project_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
 ):
     user_id = _require_user_id(credentials)
-    _require_project(project_id, user_id)
-
-    rows = (
-        get_client()
-        .table("meeting_rooms")
-        .select("id, title, started_at, ended_at, project_id, projects(name)")
-        .eq("project_id", project_id)
-        .is_("deleted_at", "null")
-        .order("created_at", desc=True)
-        .execute()
-    )
+    rows = await asyncio.to_thread(_fetch_project_meetings_rows, project_id, user_id)
 
     meetings = []
-    for row in rows.data:
+    for row in rows:
         duration_min = None
         if row["started_at"] and row["ended_at"]:
             started = datetime.fromisoformat(row["started_at"])
@@ -267,6 +282,21 @@ async def list_project_meetings(
     return ProjectMeetingsResponse(meetings=meetings)
 
 
+def _fetch_project_meetings_rows(project_id: str, user_id: str) -> list[dict]:
+    _require_project(project_id, user_id)
+
+    rows = (
+        get_client()
+        .table("meeting_rooms")
+        .select("id, title, started_at, ended_at, project_id, projects(name)")
+        .eq("project_id", project_id)
+        .is_("deleted_at", "null")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return rows.data
+
+
 @router.post("/{project_id}/documents", response_model=ApplyDocumentResponse)
 async def apply_project_document(
     project_id: str,
@@ -274,6 +304,13 @@ async def apply_project_document(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ):
     user_id = _require_user_id(credentials)
+    row = await asyncio.to_thread(_apply_project_document_row, project_id, body, user_id)
+    return ApplyDocumentResponse(
+        project_id=row["project_id"], document_id=row["document_id"], applied_at=row["applied_at"]
+    )
+
+
+def _apply_project_document_row(project_id: str, body: ApplyDocumentRequest, user_id: str) -> dict:
     _require_project(project_id, user_id)
 
     client = get_client()
@@ -294,10 +331,7 @@ async def apply_project_document(
         .upsert({"project_id": project_id, "document_id": body.document_id})
         .execute()
     )
-    row = result.data[0]
-    return ApplyDocumentResponse(
-        project_id=row["project_id"], document_id=row["document_id"], applied_at=row["applied_at"]
-    )
+    return result.data[0]
 
 
 @router.get("/{project_id}/instructions", response_model=InstructionsResponse)
@@ -305,15 +339,21 @@ async def get_project_instructions(
     project_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
 ):
     user_id = _require_user_id(credentials)
+    row = await asyncio.to_thread(_fetch_project_instructions_row, project_id, user_id)
+    if row is None:
+        return InstructionsResponse(project_id=project_id, content=None, updated_at=None)
+    return InstructionsResponse(project_id=row["project_id"], content=row["content"], updated_at=row["updated_at"])
+
+
+def _fetch_project_instructions_row(project_id: str, user_id: str) -> dict | None:
     _require_project(project_id, user_id)
 
     result = get_client().table("project_instructions").select("project_id, content, updated_at").eq(
         "project_id", project_id
     ).execute()
     if not result.data:
-        return InstructionsResponse(project_id=project_id, content=None, updated_at=None)
-    row = result.data[0]
-    return InstructionsResponse(project_id=row["project_id"], content=row["content"], updated_at=row["updated_at"])
+        return None
+    return result.data[0]
 
 
 @router.put("/{project_id}/instructions", response_model=InstructionsResponse)
@@ -323,16 +363,24 @@ async def put_project_instructions(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ):
     user_id = _require_user_id(credentials)
-    _require_project(project_id, user_id)
 
     content = body.content.strip()
     if len(content) > 500:
         raise HTTPException(status_code=400, detail={"error": "CONTENT_TOO_LONG"})
 
+    row = await asyncio.to_thread(_put_project_instructions_row, project_id, user_id, content)
+    if row is None:
+        return InstructionsResponse(project_id=project_id, content=None, updated_at=None)
+    return InstructionsResponse(project_id=row["project_id"], content=row["content"], updated_at=row["updated_at"])
+
+
+def _put_project_instructions_row(project_id: str, user_id: str, content: str) -> dict | None:
+    _require_project(project_id, user_id)
+
     # PRD 6.4: 빈값으로 저장 시 지시사항 삭제 처리 (클라이언트가 confirm Alert 표시 후 호출).
     if not content:
         get_client().table("project_instructions").delete().eq("project_id", project_id).execute()
-        return InstructionsResponse(project_id=project_id, content=None, updated_at=None)
+        return None
 
     result = (
         get_client()
@@ -340,8 +388,7 @@ async def put_project_instructions(
         .upsert({"project_id": project_id, "content": content, "updated_at": datetime.now(timezone.utc).isoformat()})
         .execute()
     )
-    row = result.data[0]
-    return InstructionsResponse(project_id=row["project_id"], content=row["content"], updated_at=row["updated_at"])
+    return result.data[0]
 
 
 @router.delete("/{project_id}/instructions", status_code=204)
@@ -349,5 +396,9 @@ async def delete_project_instructions(
     project_id: str, credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
 ):
     user_id = _require_user_id(credentials)
+    await asyncio.to_thread(_delete_project_instructions_row, project_id, user_id)
+
+
+def _delete_project_instructions_row(project_id: str, user_id: str) -> None:
     _require_project(project_id, user_id)
     get_client().table("project_instructions").delete().eq("project_id", project_id).execute()

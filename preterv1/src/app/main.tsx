@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,6 +13,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LeftSidePanel } from '@/components/left-side-panel';
@@ -27,26 +29,30 @@ import {
   MeetingsApiError,
   RecentMeeting,
 } from '@/lib/meetings';
+import i18n, { setAppLanguage } from '@/lib/i18n';
+import { getMainScreenCache, getSidePanelCache, setMainScreenCache, setSidePanelCache } from '@/lib/main-screen-cache';
 import { fetchProjects, Project, ProjectsApiError } from '@/lib/projects';
 import { registerParticipant } from '@/lib/rooms';
 import { getMyPlan, getMyProfile, MyPlan, MyProfile } from '@/lib/users';
 
 // PRD 4.2: 시간대별 인사 메시지 — 디바이스 로컬 시간(HH) 기준, 시간대별로 정해진 문구 노출.
-const GREETING_CANDIDATES: { range: [number, number]; message: string }[] = [
-  { range: [0, 6], message: '아직 일하고 계신가요, {name}님?\n오늘도 응원해요' },
-  { range: [6, 10], message: '좋은 아침이에요, {name}님\n오늘 성공적인 미팅을 기원해요' },
-  { range: [10, 12], message: '좋은 하루예요, {name}님\n오늘 수출 협상을 응원해요' },
-  { range: [12, 14], message: '점심 시간이에요, {name}님\n오후 미팅도 힘내세요' },
-  { range: [14, 18], message: '오늘도 열심히 하고 계시군요,\n{name}님 좋은 성과 기원해요' },
-  { range: [18, 21], message: '수고하셨어요, {name}님\n오늘 하루도 잘 마무리하세요' },
-  { range: [21, 24], message: '오늘도 고생하셨어요,\n{name}님 내일도 응원해요' },
+const GREETING_CANDIDATES: { range: [number, number]; key: string }[] = [
+  { range: [0, 6], key: 'main.greetingLateNight' },
+  { range: [6, 10], key: 'main.greetingMorning' },
+  { range: [10, 12], key: 'main.greetingForenoon' },
+  { range: [12, 14], key: 'main.greetingLunch' },
+  { range: [14, 18], key: 'main.greetingAfternoon' },
+  { range: [18, 21], key: 'main.greetingEvening' },
+  { range: [21, 24], key: 'main.greetingNight' },
 ];
+
+const LOCALE_BY_APP_LANGUAGE: Record<string, string> = { ko: 'ko-KR', ja: 'ja-JP', en: 'en-US' };
 
 function pickGreeting(name: string | null): string {
   const hour = new Date().getHours();
   const slot = GREETING_CANDIDATES.find(({ range }) => hour >= range[0] && hour < range[1]);
-  const message = slot?.message ?? GREETING_CANDIDATES[0].message;
-  return message.replace('{name}', name?.trim() ? name.trim() : '');
+  const key = slot?.key ?? GREETING_CANDIDATES[0].key;
+  return i18n.t(key, { name: name?.trim() ? name.trim() : '' });
 }
 
 function formatDateGroupLabel(isoDate: string): string {
@@ -57,17 +63,22 @@ function formatDateGroupLabel(isoDate: string): string {
     (startOfDay(date).getTime() - startOfDay(now).getTime()) / 86400000,
   );
 
-  const label = `${date.getFullYear()}년 ${date.getMonth() + 1}월 ${date.getDate()}일`;
-  if (diffDays === 0) return `${label} (오늘)`;
-  if (diffDays === 1) return `${label} · 내일`;
-  if (diffDays > 1) return `${label} · ${diffDays}일 뒤`;
+  const label = i18n.t('main.dateLabel', {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+    day: date.getDate(),
+  });
+  if (diffDays === 0) return i18n.t('main.dateToday', { label });
+  if (diffDays === 1) return i18n.t('main.dateTomorrow', { label });
+  if (diffDays > 1) return i18n.t('main.dateDaysLater', { label, days: diffDays });
   return label;
 }
 
 function formatTimeMeta(meeting: Meeting): string {
   const at = meeting.scheduled_at ?? meeting.started_at;
+  const locale = LOCALE_BY_APP_LANGUAGE[i18n.language] ?? 'ko-KR';
   const time = at
-    ? new Date(at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })
+    ? new Date(at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false })
     : '';
   if (meeting.project_name) {
     const project =
@@ -96,8 +107,52 @@ function groupMeetingsByDate(meetings: Meeting[]): MeetingGroup[] {
   return Array.from(groups.values());
 }
 
+// 실제 meetingListCard/meetingRow와 같은 모양(날짜 라벨 + 제목/메타 두 줄 + 화살표 자리)을
+// 그대로 따라가는 스켈레톤 — 박스 3개로는 "로딩 중"이라는 느낌만 줄 뿐 실제 리스트와
+// 형태가 달라 어색했다. pulse 애니메이션으로 살짝 깜빡여 로딩임을 알린다.
+function SkeletonGroup({ rowWidths }: { rowWidths: number[] }) {
+  return (
+    <View style={styles.skeletonGroup}>
+      <View style={styles.skeletonDateLabel} />
+      {rowWidths.map((titleWidth, index) => (
+        <View key={index} style={styles.skeletonRow}>
+          <View style={styles.skeletonRowText}>
+            <View style={[styles.skeletonLine, { width: `${titleWidth}%` }]} />
+            <View style={[styles.skeletonLine, styles.skeletonLineSmall]} />
+          </View>
+          <View style={styles.skeletonArrow} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function MeetingListSkeleton() {
+  const pulse = useRef(new Animated.Value(0.45)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.45, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+
+  return (
+    <Animated.View style={[styles.meetingListCard, styles.meetingListCardNoBorder, { opacity: pulse }]}>
+      <SkeletonGroup rowWidths={[68, 48]} />
+      <View style={styles.groupDivider} />
+      <SkeletonGroup rowWidths={[55]} />
+    </Animated.View>
+  );
+}
+
 function MeetingRow({ meeting, isLast }: { meeting: Meeting; isLast: boolean }) {
   const router = useRouter();
+  const { t } = useTranslation();
   const isLive = meeting.status === 'active';
   const [entering, setEntering] = useState(false);
 
@@ -113,7 +168,7 @@ function MeetingRow({ meeting, isLast }: { meeting: Meeting; isLast: boolean }) 
           params: {
             room_id: meeting.id,
             room_code: meeting.room_code,
-            title: meeting.title ?? '미팅',
+            title: meeting.title ?? t('main.untitledMeeting'),
             started: isLive ? '1' : undefined,
           },
         });
@@ -136,12 +191,12 @@ function MeetingRow({ meeting, isLast }: { meeting: Meeting; isLast: boolean }) 
         params: {
           room_id: meeting.id,
           room_code: meeting.room_code,
-          title: meeting.title ?? '미팅',
+          title: meeting.title ?? t('main.untitledMeeting'),
           status: meeting.status,
         },
       });
     } catch {
-      Alert.alert('미팅에 입장할 수 없어요', '잠시 후 다시 시도해주세요');
+      Alert.alert(t('main.cannotJoinTitle'), t('main.cannotJoinBody'));
     } finally {
       setEntering(false);
     }
@@ -151,14 +206,14 @@ function MeetingRow({ meeting, isLast }: { meeting: Meeting; isLast: boolean }) 
     <Pressable
       onPress={handlePress}
       style={[styles.meetingRow, !isLast && styles.meetingRowDivider]}
-      accessibilityLabel={`${meeting.title ?? '미팅'}, ${formatTimeMeta(meeting)}`}>
+      accessibilityLabel={`${meeting.title ?? t('main.untitledMeeting')}, ${formatTimeMeta(meeting)}`}>
       <View style={styles.meetingRowText}>
         <View style={styles.meetingTitleLine}>
           <Text style={styles.meetingTitle} numberOfLines={1}>
-            {meeting.title ?? '제목 없는 미팅'}
+            {meeting.title ?? t('main.noTitleMeeting')}
           </Text>
           {isLive && (
-            <View style={styles.liveBadge} accessibilityLabel="현재 진행 중">
+            <View style={styles.liveBadge} accessibilityLabel={t('main.liveAccessibilityLabel')}>
               <Text style={styles.liveBadgeText}>Live</Text>
             </View>
           )}
@@ -172,20 +227,29 @@ function MeetingRow({ meeting, isLast }: { meeting: Meeting; isLast: boolean }) 
 
 export default function MainScreen() {
   const router = useRouter();
-  const { reservationSnackbar } = useLocalSearchParams<{ reservationSnackbar?: string }>();
-  const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [userName, setUserName] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { t } = useTranslation();
+  const { reservationSnackbar, meetingEndedSnackbar, refreshMeetings } = useLocalSearchParams<{
+    reservationSnackbar?: string;
+    meetingEndedSnackbar?: string;
+    refreshMeetings?: string;
+  }>();
+  // 메인 화면은 router.replace('/main')으로 자주 재마운트되는데, 매번 스켈레톤부터
+  // 다시 보여주면 안 된다 — 앱 켜진 동안 한 번 불러온 값은 모듈 캐시에서 즉시 채운다.
+  const cachedMain = getMainScreenCache();
+  const cachedSide = getSidePanelCache();
+  const [meetings, setMeetings] = useState<Meeting[]>(cachedMain?.meetings ?? []);
+  const [userName, setUserName] = useState<string | null>(cachedMain?.userName ?? null);
+  const [loading, setLoading] = useState(cachedMain === null);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [profileVisible, setProfileVisible] = useState(false);
-  const [profile, setProfile] = useState<MyProfile | null>(null);
-  const [plan, setPlan] = useState<MyPlan | null>(null);
+  const [profile, setProfile] = useState<MyProfile | null>(cachedMain?.profile ?? null);
+  const [plan, setPlan] = useState<MyPlan | null>(cachedMain?.plan ?? null);
   const [leftPanelVisible, setLeftPanelVisible] = useState(false);
-  const [sideProjects, setSideProjects] = useState<Project[]>([]);
-  const [sideMeetings, setSideMeetings] = useState<RecentMeeting[]>([]);
-  const [sideDocuments, setSideDocuments] = useState<Document[]>([]);
-  const [sideLoading, setSideLoading] = useState(true);
+  const [sideProjects, setSideProjects] = useState<Project[]>(cachedSide?.projects ?? []);
+  const [sideMeetings, setSideMeetings] = useState<RecentMeeting[]>(cachedSide?.meetings ?? []);
+  const [sideDocuments, setSideDocuments] = useState<Document[]>(cachedSide?.documents ?? []);
+  const [sideLoading, setSideLoading] = useState(cachedSide === null);
   const [sideLoadError, setSideLoadError] = useState(false);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
@@ -200,6 +264,14 @@ export default function MainScreen() {
     }
   }, [reservationSnackbar, router]);
 
+  useEffect(() => {
+    if (meetingEndedSnackbar) {
+      setSnackbarMessage(decodeURIComponent(meetingEndedSnackbar));
+      setSnackbarVisible(true);
+      router.setParams({ meetingEndedSnackbar: undefined });
+    }
+  }, [meetingEndedSnackbar, router]);
+
   useFocusEffect(
     useCallback(() => {
       if (pendingReopenProfile.current) {
@@ -210,8 +282,12 @@ export default function MainScreen() {
   );
 
   const load = useCallback(async () => {
+    let nextMeetings = getMainScreenCache()?.meetings ?? [];
+    let nextUserName = getMainScreenCache()?.userName ?? null;
     try {
       const [meetingsResult, me] = await Promise.all([fetchUpcomingMeetings(), getMe()]);
+      nextMeetings = meetingsResult;
+      nextUserName = me.user.name;
       setMeetings(meetingsResult);
       setUserName(me.user.name);
       setLoadError(false);
@@ -226,12 +302,30 @@ export default function MainScreen() {
     ]);
     setProfile(profileResult);
     setPlan(planResult);
+    setMainScreenCache({ meetings: nextMeetings, userName: nextUserName, profile: profileResult, plan: planResult });
+    // 로그인 사용자의 명시적 app_language를 디바이스 로캘보다 우선 적용 (정책 §3).
+    setAppLanguage(profileResult?.app_language);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
+    // 이미 한 번 불러온 적 있으면(앱 켜진 동안 캐시 존재) 재마운트 시 다시 부르지 않는다 —
+    // pull-to-refresh(handleRefresh)에서만 명시적으로 다시 부른다.
+    if (getMainScreenCache() !== null) return;
     setLoading(true);
     load().finally(() => setLoading(false));
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 미팅 조인/생성/종료 직후 메인으로 돌아왔을 때는 캐시가 있어도 한 번 강제로
+  // 새로고침한다 — 위 캐시 우선 로직 때문에 방금 처리한 미팅이 리스트에 바로 안
+  // 반영되는 문제(예약 등록, 미팅 종료 후 목록에서 사라짐 등)를 막기 위함.
+  useEffect(() => {
+    if (!refreshMeetings) return;
+    load();
+    router.setParams({ refreshMeetings: undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshMeetings]);
 
   // LeftSidePanel(미팅/자료 탭) 데이터 — 패널을 열 때마다 새로 fetch하면 매번 로딩이
   // 보였다. 메인 화면 진입 시 한 번에 미리 받아두고, 패널의 pull-to-refresh로만 재호출한다.
@@ -246,6 +340,7 @@ export default function MainScreen() {
       setSideMeetings(meetingsResult);
       setSideDocuments(documentsResult);
       setSideLoadError(false);
+      setSidePanelCache({ projects: projectsResult, meetings: meetingsResult, documents: documentsResult });
     } catch (error) {
       if (error instanceof ProjectsApiError || error instanceof MeetingsApiError || error instanceof DocumentsApiError) {
         setSideLoadError(true);
@@ -254,9 +349,11 @@ export default function MainScreen() {
   }, []);
 
   useEffect(() => {
+    if (getSidePanelCache() !== null) return;
     setSideLoading(true);
     loadSidePanelData().finally(() => setSideLoading(false));
-  }, [loadSidePanelData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -277,16 +374,20 @@ export default function MainScreen() {
         <Pressable
           hitSlop={8}
           onPress={() => setLeftPanelVisible(true)}
-          accessibilityLabel="메뉴 열기"
-          accessibilityHint="사이드 패널을 표시합니다">
+          accessibilityLabel={t('main.openMenu')}
+          accessibilityHint={t('main.openMenuHint')}>
           <Text style={styles.menuIcon}>☰</Text>
         </Pressable>
         <Pressable
           hitSlop={8}
           onPress={() => setProfileVisible(true)}
-          accessibilityLabel={`${userName ?? ''}님의 프로필`}
+          accessibilityLabel={t('main.profileAccessibilityLabel', { name: userName ?? '' })}
           style={styles.profileAvatar}>
-          <Text style={styles.profileInitial}>{(userName ?? '?').trim().charAt(0)}</Text>
+          {profile?.avatar_url ? (
+            <Image source={{ uri: profile.avatar_url }} style={styles.profileAvatarImage} />
+          ) : (
+            <Text style={styles.profileInitial}>{(userName ?? '?').trim().charAt(0)}</Text>
+          )}
         </Pressable>
       </View>
 
@@ -297,16 +398,12 @@ export default function MainScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={Brand.primary} />
         }>
         {loading ? (
-          <View style={styles.skeletonWrap}>
-            {[0, 1, 2].map((i) => (
-              <View key={i} style={styles.skeletonRow} />
-            ))}
-          </View>
+          <MeetingListSkeleton />
         ) : loadError ? (
           <View style={styles.centerMessage}>
-            <Text style={styles.errorText}>미팅 목록을 불러오지 못했어요. 다시 시도해주세요</Text>
+            <Text style={styles.errorText}>{t('main.loadError')}</Text>
             <Pressable onPress={load} style={styles.retryButton}>
-              <Text style={styles.retryButtonLabel}>다시 시도</Text>
+              <Text style={styles.retryButtonLabel}>{t('main.retry')}</Text>
             </Pressable>
           </View>
         ) : groups.length === 0 ? (
@@ -356,7 +453,7 @@ export default function MainScreen() {
               style={styles.choiceButtonIcon}
               contentFit="contain"
             />
-            <Text style={styles.joinButtonLabel}>미팅 참가하기</Text>
+            <Text style={styles.joinButtonLabel}>{t('main.joinMeeting')}</Text>
           </Pressable>
           <Pressable
             style={styles.createButton}
@@ -367,7 +464,7 @@ export default function MainScreen() {
               style={styles.choiceButtonIcon}
               contentFit="contain"
             />
-            <Text style={styles.createButtonLabel}>미팅 생성하기</Text>
+            <Text style={styles.createButtonLabel}>{t('main.createMeeting')}</Text>
           </Pressable>
         </View>
       </View>
@@ -431,6 +528,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Brand.primary,
   },
+  profileAvatarImage: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+  },
   scrollArea: {
     flex: 1,
   },
@@ -440,14 +542,43 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.three,
     paddingBottom: 220,
   },
-  skeletonWrap: {
+  skeletonGroup: {
     gap: 12,
-    paddingTop: Spacing.five,
+  },
+  skeletonDateLabel: {
+    width: 90,
+    height: 12,
+    borderRadius: 4,
+    backgroundColor: Brand.surfaceBackground,
   },
   skeletonRow: {
-    height: 40,
-    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+  },
+  skeletonRowText: {
+    flex: 1,
+    gap: 6,
+  },
+  skeletonLine: {
+    height: 14,
+    width: '70%',
+    borderRadius: 4,
     backgroundColor: Brand.surfaceBackground,
+  },
+  skeletonLineSmall: {
+    height: 10,
+    width: '40%',
+    borderRadius: 4,
+    backgroundColor: Brand.surfaceBackground,
+  },
+  skeletonArrow: {
+    width: 12,
+    height: 12,
+    borderRadius: 3,
+    backgroundColor: Brand.surfaceBackground,
+    marginLeft: 12,
   },
   centerMessage: {
     flex: 1,
@@ -497,6 +628,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 24,
     gap: 16,
+  },
+  meetingListCardNoBorder: {
+    borderWidth: 0,
   },
   meetingGroup: {
     gap: 12,

@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 
 import { DeleteProjectModal } from '@/components/delete-project-modal';
 import { ProjectDocSheet } from '@/components/project-doc-sheet';
@@ -17,6 +18,7 @@ import {
   ProjectMeeting,
   updateProjectName,
 } from '@/lib/projects';
+import i18n from '@/lib/i18n';
 
 function formatDetail(meeting: ProjectMeeting): string {
   if (!meeting.started_at) return '';
@@ -34,12 +36,13 @@ function tabLabels(detail: ProjectDetail | null) {
   const hasDocs = (detail?.document_count ?? 0) > 0;
   const hasInstructions = detail?.has_instructions ?? false;
   return {
-    left: hasDocs ? '프로젝트 자료' : '자료 추가',
-    right: hasInstructions ? '지시사항' : '지침 추가',
+    left: hasDocs ? i18n.t('projectDetail.tabDocs') : i18n.t('projectDetail.tabAddDocs'),
+    right: hasInstructions ? i18n.t('projectDetail.tabInstructions') : i18n.t('projectDetail.tabAddInstructions'),
   };
 }
 
 export default function ProjectDetailScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const { project_id } = useLocalSearchParams<{ project_id: string }>();
 
@@ -80,9 +83,9 @@ export default function ProjectDetailScreen() {
       await updateProjectName(project_id, name);
       setDetail((prev) => (prev ? { ...prev, name } : prev));
       setRenameVisible(false);
-      Alert.alert('이름이 변경되었어요');
+      Alert.alert(t('projectDetail.renamed'));
     } catch {
-      Alert.alert('이름 변경에 실패했어요');
+      Alert.alert(t('projectDetail.renameFailed'));
     }
   }
 
@@ -93,7 +96,7 @@ export default function ProjectDetailScreen() {
       setDeleteVisible(false);
       router.back();
     } catch {
-      Alert.alert('프로젝트 삭제에 실패했어요');
+      Alert.alert(t('projectDetail.deleteFailed'));
     }
   }
 
@@ -104,7 +107,7 @@ export default function ProjectDetailScreen() {
       <StatusBar style="dark" />
 
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} hitSlop={8} accessibilityLabel="뒤로 가기" accessibilityRole="button">
+        <Pressable onPress={() => router.back()} hitSlop={8} accessibilityLabel={t('projectDetail.back')} accessibilityRole="button">
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
         <Text style={styles.topBarTitle} numberOfLines={1}>
@@ -113,7 +116,7 @@ export default function ProjectDetailScreen() {
         <Pressable
           onPress={() => setMenuVisible((v) => !v)}
           hitSlop={8}
-          accessibilityLabel="프로젝트 옵션 메뉴"
+          accessibilityLabel={t('projectDetail.optionsMenu')}
           accessibilityRole="button">
           <Text style={styles.moreIcon}>⋯</Text>
         </Pressable>
@@ -129,7 +132,7 @@ export default function ProjectDetailScreen() {
                 setMenuVisible(false);
                 setRenameVisible(true);
               }}>
-              <Text style={styles.menuItemLabel}>이름 바꾸기</Text>
+              <Text style={styles.menuItemLabel}>{t('projectDetail.renameMenu')}</Text>
             </Pressable>
             <View style={styles.menuDivider} />
             <Pressable
@@ -138,7 +141,7 @@ export default function ProjectDetailScreen() {
                 setMenuVisible(false);
                 setDeleteVisible(true);
               }}>
-              <Text style={[styles.menuItemLabel, styles.menuItemDanger]}>삭제하기</Text>
+              <Text style={[styles.menuItemLabel, styles.menuItemDanger]}>{t('projectDetail.deleteMenu')}</Text>
             </Pressable>
           </View>
         </>
@@ -168,26 +171,26 @@ export default function ProjectDetailScreen() {
           </View>
         ) : loadError ? (
           <View style={styles.centerMessage}>
-            <Text style={styles.errorText}>프로젝트 정보를 불러오지 못했어요</Text>
+            <Text style={styles.errorText}>{t('projectDetail.loadFailed')}</Text>
             <Pressable onPress={load} style={styles.retryButton}>
-              <Text style={styles.retryButtonLabel}>다시 시도</Text>
+              <Text style={styles.retryButtonLabel}>{t('projectDetail.retry')}</Text>
             </Pressable>
           </View>
         ) : meetings.length === 0 ? (
           <View style={styles.centerMessage}>
             <Text style={styles.emptyIcon}>📋</Text>
-            <Text style={styles.emptyText}>소속된 미팅이 없어요</Text>
+            <Text style={styles.emptyText}>{t('projectDetail.noMeetings')}</Text>
           </View>
         ) : (
           meetings.map((meeting) => (
             <Pressable
               key={meeting.id}
               style={styles.meetingRow}
-              onPress={() => Alert.alert('미팅 상세 화면은 준비 중이에요')}
+              onPress={() => router.push({ pathname: '/after-meeting', params: { room_id: meeting.id } })}
               accessibilityRole="button">
               <View style={styles.meetingTextCol}>
                 <Text style={styles.meetingTitle} numberOfLines={1}>
-                  {meeting.title ?? '제목 없는 미팅'}
+                  {meeting.title ?? t('main.noTitleMeeting')}
                 </Text>
                 <Text style={styles.meetingDetail}>{formatDetail(meeting)}</Text>
               </View>

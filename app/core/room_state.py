@@ -11,6 +11,7 @@ import base64
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from fastapi import WebSocket
 
@@ -20,6 +21,13 @@ logger = logging.getLogger(__name__)
 
 # PRD 5.3: 3초 무음이면 서버가 발화 턴을 강제로 마감한다.
 SILENCE_TIMEOUT_SECONDS = 3.0
+
+# After Meeting PRD 7-2 — 지원 언어 전체 집합. 세션에 참가 안 한 언어는 translations에서 null.
+SUPPORTED_LANGUAGES = ("ko", "en", "ja", "zh")
+
+# country_code는 사용자 국적을 별도로 받는 입력이 없어(가입 시 언어만 선택) 발화 언어로
+# 근사한다 — 정확한 국적 데이터가 추가되면 이 매핑을 대체할 것.
+LANGUAGE_TO_COUNTRY = {"ko": "KR", "en": "US", "ja": "JP", "zh": "CN"}
 
 
 @dataclass
@@ -39,7 +47,12 @@ class ActiveTurn:
     watchdog_task: asyncio.Task | None = None
     last_audio_at: float = field(default_factory=time.monotonic)
     finalized: bool = False
-    original_broadcast_done: bool = False
+    # After Meeting PRD 8-1 — 원문 자막은 세션 여러 개 중 정확히 하나(primary_lang)의
+    # input_audio_transcription만 채택한다. 모든 세션에서 채택하면 N-1개로 중복된다.
+    primary_lang: str | None = None
+    original_text: str = ""
+    translations: dict[str, str] = field(default_factory=dict)  # target_lang -> 누적 통역 텍스트
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class RoomState:
@@ -51,13 +64,23 @@ class RoomState:
         project_instructions: str | None,
         rag_keywords: str | None,
         status: str = "waiting",
+        started_at: str | None = None,
     ):
         self.room_id = room_id
         self.status = status
+        # 클라이언트마다 본인 화면 진입/시작 시각부터 따로 타이머를 돌리면 호스트/참가자
+        # 헤더 시계가 서로 다르게 보인다 — 미팅의 실제 시작 시각(meeting_rooms.started_at)을
+        # ROOM_STATE_UPDATE에 함께 실어 전원이 같은 기준시로 경과 시간을 계산하게 한다.
+        self.started_at = started_at
         self.participants: dict[str, Participant] = {}
         self.active_turn: ActiveTurn | None = None
         self._lock = asyncio.Lock()
         self._system_instruction = _build_system_instruction(project_instructions, rag_keywords)
+        # After Meeting PRD 8-1 — talk 단위로 확정된 발화 블록을 미팅 종료까지 메모리에
+        # 누적한다(미팅 중 DB 쓰기 없음). 종료 시점에 호출자가 pop_session_buffer()로
+        # 한 번에 가져가 bulk INSERT한다.
+        self._session_buffer: list[dict] = []
+        self._block_sequence = 0
 
     # ---- 참가자 관리 -----------------------------------------------------
 
@@ -77,15 +100,18 @@ class RoomState:
     def is_empty(self) -> bool:
         return not self.participants
 
-    async def set_status(self, status: str) -> None:
+    async def set_status(self, status: str, started_at: str | None = None) -> None:
         """호스트 PATCH /rooms/{id}/start 등 상태 전이 시 대기 중인 참가자에게 브로드캐스트."""
         self.status = status
+        if started_at is not None:
+            self.started_at = started_at
         await self.broadcast(self.room_state_payload())
 
     def room_state_payload(self) -> dict:
         return {
             "type": "ROOM_STATE_UPDATE",
             "status": self.status,
+            "startedAt": self.started_at,
             "users": [
                 {
                     "userId": p.user_id,
@@ -220,7 +246,11 @@ class RoomState:
         if not sessions:
             return
 
-        turn = ActiveTurn(speaker_id=speaker_id, sessions=sessions)
+        # 원문 자막/저장용 입력 transcription은 세션 하나만 채택한다 — 발화자 본인 언어로
+        # 띄운 세션(있으면)을 우선하고, 없으면(전원 외국어 청자) 첫 번째 세션으로 대체.
+        primary_lang = speaker.language if speaker.language in sessions else next(iter(sessions))
+
+        turn = ActiveTurn(speaker_id=speaker_id, sessions=sessions, primary_lang=primary_lang)
         self.active_turn = turn
 
         for target_lang, session in sessions.items():
@@ -244,7 +274,8 @@ class RoomState:
                 if content is None:
                     continue
 
-                if content.input_transcription and content.input_transcription.text and not turn.original_broadcast_done:
+                if target_lang == turn.primary_lang and content.input_transcription and content.input_transcription.text:
+                    turn.original_text += content.input_transcription.text
                     await self.broadcast(
                         {
                             "type": "SUBTITLE_ORIGINAL",
@@ -255,6 +286,9 @@ class RoomState:
                     )
 
                 if not is_origin_only and content.output_transcription and content.output_transcription.text:
+                    turn.translations[target_lang] = (
+                        turn.translations.get(target_lang, "") + content.output_transcription.text
+                    )
                     await self._send_to_language(
                         target_lang,
                         turn.speaker_id,
@@ -334,6 +368,43 @@ class RoomState:
 
         await self.broadcast({"type": "TURN_COMPLETE", "speakerId": turn.speaker_id})
         await self.broadcast(self.room_state_payload())
+        self._record_speaker_block(turn)
+
+    def _record_speaker_block(self, turn: ActiveTurn) -> None:
+        # talk 단위 저장 — 빈 발화(원문 텍스트 없음, 예: 마이크 잡음만 들어온 경우)는
+        # 스킵한다. PRD가 명시한 "단어/문장 단위 분절 금지"는 이미 위 누적 로직으로 보장됨.
+        if not turn.original_text.strip():
+            return
+        speaker = self.participants.get(turn.speaker_id)
+        if speaker is None:
+            return
+
+        translations = {lang: None for lang in SUPPORTED_LANGUAGES}
+        # 화자 본인 언어는 통역이 아니라 원문 그대로 동일 키에 복사(PRD 7-2).
+        translations[speaker.language] = turn.original_text
+        for lang, text in turn.translations.items():
+            translations[lang] = text
+
+        self._block_sequence += 1
+        self._session_buffer.append(
+            {
+                "speaker_user_id": speaker.user_id if speaker.role != "guest" else None,
+                "speaker_name": speaker.display_name,
+                "country_code": LANGUAGE_TO_COUNTRY.get(speaker.language),
+                "original_language": speaker.language,
+                "original_text": turn.original_text,
+                "translations": translations,
+                "started_at": turn.started_at.isoformat(),
+                "ended_at": datetime.now(timezone.utc).isoformat(),
+                "sequence": self._block_sequence,
+            }
+        )
+
+    def pop_session_buffer(self) -> list[dict]:
+        """미팅 종료 시 호출자가 누적된 발화 블록을 가져가고 비운다."""
+        blocks = self._session_buffer
+        self._session_buffer = []
+        return blocks
 
     async def end_room(self, ended_by_display_name: str) -> None:
         """호스트가 미팅을 종료할 때 — 진행 중인 턴을 정리하고 ROOM_ENDED를 알린다."""
@@ -378,11 +449,12 @@ class RoomManager:
         project_instructions: str | None,
         rag_keywords: str | None,
         status: str = "waiting",
+        started_at: str | None = None,
     ) -> RoomState:
         async with self._lock:
             room = self._rooms.get(room_id)
             if room is None:
-                room = RoomState(room_id, project_instructions, rag_keywords, status=status)
+                room = RoomState(room_id, project_instructions, rag_keywords, status=status, started_at=started_at)
                 self._rooms[room_id] = room
             return room
 

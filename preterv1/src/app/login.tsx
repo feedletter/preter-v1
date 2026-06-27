@@ -14,6 +14,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 const EXTRA_LIFT = Dimensions.get('window').height * 0.15;
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,12 +22,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { TextField } from '@/components/text-field';
 import { Brand, Spacing } from '@/constants/theme';
 import { AuthApiError, login } from '@/lib/auth';
+import { logEvent, setAnalyticsUser, setCrashUser } from '@/lib/firebase';
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-const CREDENTIALS_ERROR_MESSAGE = '이메일 또는 비밀번호를 확인해주세요';
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
+  const CREDENTIALS_ERROR_MESSAGE = t('login.credentialsError');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -49,15 +52,18 @@ export default function LoginScreen() {
     setLoading(true);
     setHasError(false);
     try {
-      await login(email, password);
+      const result = await login(email, password);
+      setAnalyticsUser(result.user.id);
+      setCrashUser(result.user.id);
+      logEvent('login', { method: 'email' });
       router.replace('/main');
     } catch (err) {
       if (err instanceof AuthApiError && err.code === 'INVALID_CREDENTIALS') {
         setHasError(true);
       } else if (err instanceof AuthApiError && err.code === 'NETWORK_ERROR') {
-        Alert.alert('네트워크 연결을 확인해주세요');
+        Alert.alert(t('common.networkError'));
       } else {
-        Alert.alert('로그인에 실패했어요. 잠시 후 다시 시도해주세요.');
+        Alert.alert(t('login.loginFailed'));
       }
     } finally {
       setLoading(false);
@@ -71,7 +77,7 @@ export default function LoginScreen() {
         <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backButton}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
-        <Text style={styles.topBarTitle}>이메일로 로그인</Text>
+        <Text style={styles.topBarTitle}>{t('login.topBarTitle')}</Text>
       </View>
 
       <KeyboardAvoidingView
@@ -85,26 +91,26 @@ export default function LoginScreen() {
           style={styles.logo}
           contentFit="contain"
         />
-        <Text style={styles.subtitle}>계정에 로그인하세요</Text>
+        <Text style={styles.subtitle}>{t('login.subtitle')}</Text>
 
         <View style={styles.fields}>
           <TextField
-            label="이메일"
+            label={t('login.emailLabel')}
             required
             value={email}
             onChangeText={handleChangeEmail}
-            placeholder="이메일을 입력해주세요"
+            placeholder={t('login.emailPlaceholder')}
             keyboardType="email-address"
             returnKeyType="next"
             editable={!loading}
             error={hasError ? CREDENTIALS_ERROR_MESSAGE : undefined}
           />
           <TextField
-            label="비밀번호"
+            label={t('login.passwordLabel')}
             required
             value={password}
             onChangeText={handleChangePassword}
-            placeholder="비밀번호를 입력해주세요"
+            placeholder={t('login.passwordPlaceholder')}
             secureTextEntry
             returnKeyType="done"
             editable={!loading}
@@ -114,7 +120,7 @@ export default function LoginScreen() {
         </View>
 
         <Pressable hitSlop={8} style={styles.forgotPassword}>
-          <Text style={styles.forgotPasswordText}>비밀번호 찾기</Text>
+          <Text style={styles.forgotPasswordText}>{t('login.forgotPassword')}</Text>
         </Pressable>
 
         <Pressable
@@ -124,21 +130,21 @@ export default function LoginScreen() {
           {loading ? (
             <ActivityIndicator color="white" />
           ) : (
-            <Text style={styles.loginButtonLabel}>로그인</Text>
+            <Text style={styles.loginButtonLabel}>{t('login.loginButton')}</Text>
           )}
         </Pressable>
 
         <View style={styles.divider}>
           <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>또는</Text>
+          <Text style={styles.dividerText}>{t('common.or')}</Text>
           <View style={styles.dividerLine} />
         </View>
 
         <Pressable style={styles.signupButton} onPress={() => router.push('/signup-card-intro')}>
-          <Text style={styles.signupButtonLabel}>회원가입</Text>
+          <Text style={styles.signupButtonLabel}>{t('login.signupButton')}</Text>
         </Pressable>
 
-        <Text style={styles.terms}>회원가입 시 이용약관 및 개인정보처리방침에 동의합니다</Text>
+        <Text style={styles.terms}>{t('login.terms')}</Text>
       </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

@@ -3,6 +3,8 @@
 이름 변경(SCR-P-02)과 언어 설정(SCR-P-04/05)이 같은 PATCH 엔드포인트를 공유한다.
 """
 
+import asyncio
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from google.auth.exceptions import DefaultCredentialsError
@@ -54,6 +56,11 @@ class PlanResponse(BaseModel):
 @router.get("/me", response_model=MeResponse)
 async def get_me(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     user_id = _require_user_id(credentials)
+    data = await asyncio.to_thread(_fetch_me_row, user_id)
+    return MeResponse(**data)
+
+
+def _fetch_me_row(user_id: str) -> dict:
     row = (
         get_client()
         .table("users")
@@ -64,7 +71,7 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Depends(bearer_sche
     )
     if not row.data:
         raise HTTPException(status_code=404, detail={"error": "USER_NOT_FOUND"})
-    return MeResponse(**row.data)
+    return row.data
 
 
 @router.patch("/me", response_model=MeResponse)
@@ -80,6 +87,11 @@ async def update_me(
     if not update:
         raise HTTPException(status_code=422, detail={"error": "NO_FIELDS_TO_UPDATE"})
 
+    data = await asyncio.to_thread(_update_me_row, user_id, update)
+    return MeResponse(**data)
+
+
+def _update_me_row(user_id: str, update: dict) -> dict:
     client = get_client()
     client.table("users").update(update).eq("id", user_id).execute()
 
@@ -90,12 +102,17 @@ async def update_me(
         .single()
         .execute()
     )
-    return MeResponse(**row.data)
+    return row.data
 
 
 @router.get("/me/plan", response_model=PlanResponse)
 async def get_my_plan(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     user_id = _require_user_id(credentials)
+    data = await asyncio.to_thread(_fetch_my_plan_row, user_id)
+    return PlanResponse(**data)
+
+
+def _fetch_my_plan_row(user_id: str) -> dict:
     row = (
         get_client()
         .table("user_plans")
@@ -106,7 +123,7 @@ async def get_my_plan(credentials: HTTPAuthorizationCredentials = Depends(bearer
     )
     if not row.data:
         raise HTTPException(status_code=404, detail={"error": "PLAN_NOT_FOUND"})
-    return PlanResponse(**row.data)
+    return row.data
 
 
 @router.post("/me/avatar", response_model=MeResponse)
@@ -131,6 +148,11 @@ async def upload_my_avatar(
         # 계정으로 자동 동작). gcloud auth application-default login으로 해결 가능.
         raise HTTPException(status_code=503, detail={"error": "STORAGE_UNAVAILABLE"})
 
+    data = await asyncio.to_thread(_save_avatar_url_row, user_id, avatar_url)
+    return MeResponse(**data)
+
+
+def _save_avatar_url_row(user_id: str, avatar_url: str) -> dict:
     client = get_client()
     client.table("users").update({"avatar_url": avatar_url}).eq("id", user_id).execute()
 
@@ -141,12 +163,17 @@ async def upload_my_avatar(
         .single()
         .execute()
     )
-    return MeResponse(**row.data)
+    return row.data
 
 
 @router.delete("/me/avatar", response_model=MeResponse)
 async def delete_my_avatar(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
     user_id = _require_user_id(credentials)
+    data = await asyncio.to_thread(_delete_avatar_row, user_id)
+    return MeResponse(**data)
+
+
+def _delete_avatar_row(user_id: str) -> dict:
     client = get_client()
 
     current = client.table("users").select("avatar_url").eq("id", user_id).single().execute()
@@ -165,4 +192,4 @@ async def delete_my_avatar(credentials: HTTPAuthorizationCredentials = Depends(b
         .single()
         .execute()
     )
-    return MeResponse(**row.data)
+    return row.data

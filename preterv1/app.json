@@ -10,12 +10,20 @@
     "ios": {
       "icon": "./assets/images/icon.png",
       "bundleIdentifier": "com.preter.app",
+      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
+      },
+      "entitlements": {
+        "aps-environment": "production"
       }
     },
     "android": {
       "package": "com.preter.app",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -46,12 +54,6 @@
       ],
       "expo-secure-store",
       [
-        "expo-audio",
-        {
-          "microphonePermission": "통역 세션에서 음성을 인식하기 위해 마이크 접근이 필요합니다"
-        }
-      ],
-      [
         "expo-image-picker",
         {
           "photosPermission": "프로필 사진을 선택하기 위해 사진 라이브러리 접근이 필요합니다",
@@ -59,7 +61,43 @@
         }
       ],
       "expo-asset",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "react-native-audio-api",
+        {
+          "iosBackgroundMode": true,
+          "iosMicrophonePermission": "통역 세션에서 음성을 인식하기 위해 마이크 접근이 필요합니다",
+          "androidPermissions": [
+            "android.permission.RECORD_AUDIO",
+            "android.permission.MODIFY_AUDIO_SETTINGS",
+            "android.permission.FOREGROUND_SERVICE",
+            "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+          ],
+          "androidForegroundService": true,
+          "androidFSTypes": [
+            "mediaPlayback"
+          ]
+        }
+      ],
+      "expo-localization",
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging",
+      "@react-native-firebase/crashlytics",
+      "@react-native-firebase/analytics",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static",
+            "forceStaticLinking": [
+              "RNFBApp",
+              "RNFBAnalytics",
+              "RNFBCrashlytics",
+              "RNFBMessaging"
+            ]
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

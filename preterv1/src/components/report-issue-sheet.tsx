@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 import { useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import * as SecureStore from 'expo-secure-store';
 
 import { BottomSheet } from '@/components/bottom-sheet';
@@ -10,11 +11,11 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 type Category = 'audio' | 'connection' | 'ui' | 'other';
 
-const CATEGORIES: { value: Category; label: string }[] = [
-  { value: 'audio', label: '음성/통역' },
-  { value: 'connection', label: '연결 오류' },
-  { value: 'ui', label: 'UI 버그' },
-  { value: 'other', label: '기타' },
+const CATEGORIES: { value: Category; labelKey: string }[] = [
+  { value: 'audio', labelKey: 'reportIssueSheet.categoryAudio' },
+  { value: 'connection', labelKey: 'reportIssueSheet.categoryConnection' },
+  { value: 'ui', labelKey: 'reportIssueSheet.categoryUi' },
+  { value: 'other', labelKey: 'reportIssueSheet.categoryOther' },
 ];
 
 type ReportIssueSheetProps = {
@@ -24,6 +25,7 @@ type ReportIssueSheetProps = {
 
 // Profile PRD 6장 (SCR-P-06) — 앱 문제 신고하기 하프 바텀시트.
 export function ReportIssueSheet({ visible, onClose }: ReportIssueSheetProps) {
+  const { t } = useTranslation();
   const [category, setCategory] = useState<Category>('audio');
   const [body, setBody] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -56,10 +58,10 @@ export function ReportIssueSheet({ visible, onClose }: ReportIssueSheetProps) {
       });
       if (!response.ok) throw new Error('submit failed');
 
-      Alert.alert('신고가 접수되었어요. 빠르게 확인할게요 💙');
+      Alert.alert(t('reportIssueSheet.submitSuccess'));
       handleClose();
     } catch {
-      Alert.alert('신고 접수에 실패했어요. 잠시 후 다시 시도해주세요.');
+      Alert.alert(t('reportIssueSheet.submitFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -67,10 +69,8 @@ export function ReportIssueSheet({ visible, onClose }: ReportIssueSheetProps) {
 
   return (
     <BottomSheet visible={visible} onClose={handleClose} sheetStyle={styles.sheet}>
-      <Text style={styles.title}>앱 문제 신고하기</Text>
-      <Text style={styles.description}>
-        발생한 문제를 자세히 설명해주세요. 빠르게 확인하고 개선할게요 🙏
-      </Text>
+      <Text style={styles.title}>{t('reportIssueSheet.title')}</Text>
+      <Text style={styles.description}>{t('reportIssueSheet.description')}</Text>
 
       <View style={styles.chipRow}>
         {CATEGORIES.map((item) => {
@@ -81,7 +81,7 @@ export function ReportIssueSheet({ visible, onClose }: ReportIssueSheetProps) {
               style={[styles.chip, selected && styles.chipSelected]}
               onPress={() => setCategory(item.value)}>
               <Text style={[styles.chipLabel, selected && styles.chipLabelSelected]}>
-                {item.label}
+                {t(item.labelKey)}
               </Text>
             </Pressable>
           );
@@ -93,7 +93,7 @@ export function ReportIssueSheet({ visible, onClose }: ReportIssueSheetProps) {
           style={styles.input}
           value={body}
           onChangeText={(text) => setBody(text.slice(0, 500))}
-          placeholder="문제를 상세히 설명해주세요 (재현 방법, 기기 정보 등)"
+          placeholder={t('reportIssueSheet.bodyPlaceholder')}
           placeholderTextColor={Brand.textDisabled}
           multiline
           textAlignVertical="top"
@@ -109,7 +109,7 @@ export function ReportIssueSheet({ visible, onClose }: ReportIssueSheetProps) {
         {submitting ? (
           <ActivityIndicator color="white" />
         ) : (
-          <Text style={styles.submitButtonLabel}>신고 제출하기</Text>
+          <Text style={styles.submitButtonLabel}>{t('reportIssueSheet.submitButton')}</Text>
         )}
       </Pressable>
     </BottomSheet>

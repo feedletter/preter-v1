@@ -16,6 +16,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 
 import { DeleteProjectModal } from '@/components/delete-project-modal';
 import { DocumentContextSheet } from '@/components/document-context-sheet';
@@ -32,6 +33,7 @@ import {
   sendTextMessage,
   updateDocumentTitle,
 } from '@/lib/documents';
+import i18n from '@/lib/i18n';
 
 function dateKey(iso: string): string {
   const d = new Date(iso);
@@ -41,7 +43,7 @@ function dateKey(iso: string): string {
 // Figma "date-sep" — "2026년 6월 15일" (zero-padding 없음).
 function formatKoreanDate(iso: string): string {
   const d = new Date(iso);
-  return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일`;
+  return i18n.t('docDetail.dateLabel', { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() });
 }
 
 function formatUploadDate(iso: string): string {
@@ -50,19 +52,21 @@ function formatUploadDate(iso: string): string {
 }
 
 function bubbleLabel(type: DocumentMessage['type']): { icon: string; label: string } {
-  return type === 'file' ? { icon: '📎', label: 'PDF 파일' } : { icon: '📝', label: '텍스트' };
+  return type === 'file'
+    ? { icon: '📎', label: i18n.t('docDetail.bubblePdf') }
+    : { icon: '📝', label: i18n.t('docDetail.bubbleText') };
 }
 
 // Figma "ai-bubble" title-row — 자료 유형에 따라 맥락 저장 완료 메시지가 다름.
 function aiCardCopy(type: DocumentMessage['type']): { title: string; description: string } {
   return type === 'file'
     ? {
-        title: '맥락 저장이 완료됐어요',
-        description: '파일의 내용을 분석하고 미팅 자료로 정리하여 맥락을 학습을 완료 했어요',
+        title: i18n.t('docDetail.aiFileTitle'),
+        description: i18n.t('docDetail.aiFileDescription'),
       }
     : {
-        title: '지시사항을 저장했어요',
-        description: '입력하신 지시사항을 추가했어요. 미팅 자료로 정리하여 맥락을 학습을 완료 했어요',
+        title: i18n.t('docDetail.aiTextTitle'),
+        description: i18n.t('docDetail.aiTextDescription'),
       };
 }
 
@@ -85,6 +89,7 @@ async function pollUntilDone(documentId: string, messageId: string, onUpdate: (m
 }
 
 export default function DocDetailScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const { document_id } = useLocalSearchParams<{ document_id: string }>();
 
@@ -112,7 +117,7 @@ export default function DocDetailScreen() {
       setDetail(detailResult);
       setMessages(messagesResult);
     } catch {
-      Alert.alert('자료 정보를 불러오지 못했어요');
+      Alert.alert(t('docDetail.loadFailed'));
     }
   }, [document_id]);
 
@@ -142,7 +147,7 @@ export default function DocDetailScreen() {
       scrollRef.current?.scrollToEnd({ animated: true });
       pollUntilDone(document_id, message.id, (patch) => updateMessage(message.id, patch));
     } catch {
-      Alert.alert('전송에 실패했어요. 다시 시도해주세요');
+      Alert.alert(t('docDetail.sendTextFailed'));
     } finally {
       setSending(false);
     }
@@ -158,7 +163,7 @@ export default function DocDetailScreen() {
       scrollRef.current?.scrollToEnd({ animated: true });
       pollUntilDone(document_id, message.id, (patch) => updateMessage(message.id, patch));
     } catch {
-      Alert.alert('파일 전송에 실패했어요');
+      Alert.alert(t('docDetail.sendFileFailed'));
     } finally {
       setSending(false);
     }
@@ -174,7 +179,7 @@ export default function DocDetailScreen() {
   async function handlePickPhoto() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('사진 접근 권한이 필요해요');
+      Alert.alert(t('docDetail.photoPermissionNeeded'));
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
@@ -185,10 +190,10 @@ export default function DocDetailScreen() {
   }
 
   function handlePressAttach() {
-    Alert.alert('자료 첨부', undefined, [
-      { text: '파일', onPress: handlePickFile },
-      { text: '사진', onPress: handlePickPhoto },
-      { text: '취소', style: 'cancel' },
+    Alert.alert(t('docDetail.attachTitle'), undefined, [
+      { text: t('docDetail.attachFile'), onPress: handlePickFile },
+      { text: t('docDetail.attachPhoto'), onPress: handlePickPhoto },
+      { text: t('common.cancel'), style: 'cancel' },
     ]);
   }
 
@@ -199,7 +204,7 @@ export default function DocDetailScreen() {
       setDetail((prev) => (prev ? { ...prev, title: name } : prev));
       setRenameVisible(false);
     } catch {
-      Alert.alert('이름 변경에 실패했어요');
+      Alert.alert(t('docDetail.renameFailed'));
     }
   }
 
@@ -210,7 +215,7 @@ export default function DocDetailScreen() {
       setDeleteVisible(false);
       router.back();
     } catch {
-      Alert.alert('삭제에 실패했어요');
+      Alert.alert(t('docDetail.deleteFailed'));
     }
   }
 
@@ -224,7 +229,7 @@ export default function DocDetailScreen() {
       <StatusBar style="dark" />
 
       <View style={styles.topBar}>
-        <Pressable onPress={() => router.back()} hitSlop={8} accessibilityRole="button" accessibilityLabel="뒤로 가기">
+        <Pressable onPress={() => router.back()} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('docDetail.back')}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
         <Text style={styles.topBarTitle} numberOfLines={1}>
@@ -234,7 +239,7 @@ export default function DocDetailScreen() {
           onPress={() => setMenuVisible((v) => !v)}
           hitSlop={8}
           accessibilityRole="button"
-          accessibilityLabel="자료 옵션 메뉴">
+          accessibilityLabel={t('docDetail.optionsMenu')}>
           <Text style={styles.moreIcon}>⋯</Text>
         </Pressable>
       </View>
@@ -249,7 +254,7 @@ export default function DocDetailScreen() {
                 setMenuVisible(false);
                 setRenameVisible(true);
               }}>
-              <Text style={styles.menuItemLabel}>이름 바꾸기</Text>
+              <Text style={styles.menuItemLabel}>{t('docDetail.renameMenu')}</Text>
             </Pressable>
             <View style={styles.menuDivider} />
             <Pressable
@@ -258,7 +263,7 @@ export default function DocDetailScreen() {
                 setMenuVisible(false);
                 setDeleteVisible(true);
               }}>
-              <Text style={[styles.menuItemLabel, styles.menuItemDanger]}>삭제하기</Text>
+              <Text style={[styles.menuItemLabel, styles.menuItemDanger]}>{t('docDetail.deleteMenu')}</Text>
             </Pressable>
           </View>
         </>
@@ -267,15 +272,15 @@ export default function DocDetailScreen() {
       <View style={styles.metaBanner}>
         <View style={styles.metaLeft}>
           <Text style={styles.metaUploadDate}>
-            {detail ? `${formatUploadDate(detail.created_at)} 업로드` : ''}
+            {detail ? t('docDetail.uploadedOn', { date: formatUploadDate(detail.created_at) }) : ''}
           </Text>
           <Text style={styles.metaCounts}>
-            파일 {fileCount}개 · 텍스트 {textCount}개
+            {t('docDetail.fileTextCounts', { fileCount, textCount })}
           </Text>
         </View>
         <View style={[styles.learnedBadge, isLearned && styles.learnedBadgeActive]}>
           <Text style={[styles.learnedBadgeLabel, isLearned && styles.learnedBadgeLabelActive]}>
-            {isLearned ? '✦ 학습 완료' : '학습 전'}
+            {isLearned ? t('docDetail.learnedComplete') : t('docDetail.learnedPending')}
           </Text>
         </View>
       </View>
@@ -290,9 +295,7 @@ export default function DocDetailScreen() {
           ) : messages.length === 0 ? (
             <View style={styles.centerMessage}>
               <Text style={styles.guideIcon}>📄</Text>
-              <Text style={styles.guideText}>
-                파일을 업로드하거나 메모를 입력하면{'\n'}AI가 통역 맥락을 학습해요
-              </Text>
+              <Text style={styles.guideText}>{t('docDetail.emptyGuide')}</Text>
             </View>
           ) : (
             messages.map((message, index) => {
@@ -322,7 +325,7 @@ export default function DocDetailScreen() {
                     </View>
                   ) : message.status === 'failed' ? (
                     <View style={styles.aiBubble}>
-                      <Text style={styles.aiFailedText}>분석에 실패했어요</Text>
+                      <Text style={styles.aiFailedText}>{t('docDetail.analysisFailed')}</Text>
                     </View>
                   ) : (
                     <View style={styles.aiBubble}>
@@ -335,7 +338,7 @@ export default function DocDetailScreen() {
                       <Text style={styles.aiDescription}>{description}</Text>
                       <Pressable style={styles.viewLearnedButton} onPress={() => setContextSheetVisible(true)}>
                         <Text style={styles.viewLearnedButtonSparkle}>✦</Text>
-                        <Text style={styles.viewLearnedButtonLabel}>학습된 자료 보기</Text>
+                        <Text style={styles.viewLearnedButtonLabel}>{t('docDetail.viewLearnedButton')}</Text>
                       </Pressable>
                     </View>
                   )}
@@ -350,7 +353,7 @@ export default function DocDetailScreen() {
             <TextInput
               value={inputText}
               onChangeText={setInputText}
-              placeholder="자료 설명이나 지시사항 추가해주세요"
+              placeholder={t('docDetail.inputPlaceholder')}
               placeholderTextColor={Brand.textDisabled}
               style={styles.input}
               multiline
@@ -367,7 +370,7 @@ export default function DocDetailScreen() {
                 onPress={handlePressAttach}
                 hitSlop={12}
                 accessibilityRole="button"
-                accessibilityLabel="파일 첨부">
+                accessibilityLabel={t('docDetail.attachAccessibilityLabel')}>
                 <Text style={styles.attachButtonIcon}>+</Text>
               </Pressable>
               <Pressable
@@ -376,7 +379,7 @@ export default function DocDetailScreen() {
                 disabled={!inputText.trim() || sending}
                 hitSlop={12}
                 accessibilityRole="button"
-                accessibilityLabel="전송">
+                accessibilityLabel={t('docDetail.sendAccessibilityLabel')}>
                 {sending ? (
                   <ActivityIndicator color="white" size="small" />
                 ) : (
@@ -393,16 +396,16 @@ export default function DocDetailScreen() {
         currentName={detail?.title ?? ''}
         onClose={() => setRenameVisible(false)}
         onConfirm={handleRename}
-        title="자료 이름 변경"
-        description="새로운 자료 이름을 입력해주세요"
+        title={t('docDetail.renameModalTitle')}
+        description={t('docDetail.renameModalDescription')}
       />
 
       <DeleteProjectModal
         visible={deleteVisible}
         onClose={() => setDeleteVisible(false)}
         onConfirm={handleDelete}
-        title="자료를 삭제할까요?"
-        description={'삭제된 자료는 복구할 수 없어요.\n학습된 통역 맥락도 함께 삭제됩니다.'}
+        title={t('docDetail.deleteModalTitle')}
+        description={t('docDetail.deleteModalDescription')}
       />
 
       {document_id && (

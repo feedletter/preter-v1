@@ -12,7 +12,13 @@ export type RoomUser = {
 };
 
 export type LiveSessionEvent =
-  | { type: 'ROOM_STATE_UPDATE'; users: RoomUser[]; activeSpeakerId: string | null; status: string }
+  | {
+      type: 'ROOM_STATE_UPDATE';
+      users: RoomUser[];
+      activeSpeakerId: string | null;
+      status: string;
+      startedAt: string | null;
+    }
   | { type: 'SUBTITLE_ORIGINAL'; speakerId: string; text: string; isFinal: boolean }
   | {
       type: 'SUBTITLE_TRANSLATED';

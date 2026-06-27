@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { BottomSheet } from '@/components/bottom-sheet';
 import { Brand } from '@/constants/theme';
@@ -23,6 +24,7 @@ function formatDate(iso: string): string {
 
 // Project Detail PRD 5장 (SCR-PD-03/04/05) — 자료 추가 하프 바텀시트.
 export function ProjectDocSheet({ visible, projectId, onClose, onApplied }: ProjectDocSheetProps) {
+  const { t } = useTranslation();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -52,7 +54,7 @@ export function ProjectDocSheet({ visible, projectId, onClose, onApplied }: Proj
       // 뒤에 시작하도록 지연시킨다.
       setTimeout(onApplied, 280);
     } catch {
-      Alert.alert('자료 적용에 실패했어요');
+      Alert.alert(t('projectDocSheet.applyFailed'));
     } finally {
       setApplying(false);
     }
@@ -66,7 +68,7 @@ export function ProjectDocSheet({ visible, projectId, onClose, onApplied }: Proj
       onClose();
       router.push({ pathname: '/doc-detail', params: { document_id: document.id } });
     } catch {
-      Alert.alert('자료 생성에 실패했어요');
+      Alert.alert(t('documentSelectSheet.createFailed'));
     } finally {
       setCreating(false);
     }
@@ -77,8 +79,8 @@ export function ProjectDocSheet({ visible, projectId, onClose, onApplied }: Proj
   return (
     <>
       <BottomSheet visible={visible} onClose={onClose} sheetStyle={isEmpty ? styles.sheetEmpty : styles.sheetFilled}>
-        <Text style={styles.title}>프로젝트 자료</Text>
-        <Text style={styles.description}>프로젝트에 포함된 모든 미팅이 참조할 사용할 자료입니다.</Text>
+        <Text style={styles.title}>{t('projectDocSheet.title')}</Text>
+        <Text style={styles.description}>{t('projectDocSheet.description')}</Text>
 
         {loading ? (
           <View style={styles.centerMessage}>
@@ -87,8 +89,8 @@ export function ProjectDocSheet({ visible, projectId, onClose, onApplied }: Proj
         ) : isEmpty ? (
           <View style={styles.centerMessage}>
             <Text style={styles.emptyIcon}>📄</Text>
-            <Text style={styles.emptyTitle}>아직 등록된 자료가 없어요</Text>
-            <Text style={styles.emptySubtitle}>자료를 추가하면 통역 중 자동으로 참고해요</Text>
+            <Text style={styles.emptyTitle}>{t('documentSelectSheet.emptyTitle')}</Text>
+            <Text style={styles.emptySubtitle}>{t('documentSelectSheet.emptySubtitle')}</Text>
           </View>
         ) : (
           <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
@@ -127,7 +129,7 @@ export function ProjectDocSheet({ visible, projectId, onClose, onApplied }: Proj
           {creating ? (
             <ActivityIndicator color={Brand.primary} size="small" />
           ) : (
-            <Text style={styles.newDocButtonLabel}>신규 자료 생성하기</Text>
+            <Text style={styles.newDocButtonLabel}>{t('documentSelectSheet.newDocumentButton')}</Text>
           )}
         </Pressable>
 
@@ -139,7 +141,7 @@ export function ProjectDocSheet({ visible, projectId, onClose, onApplied }: Proj
           {applying ? (
             <ActivityIndicator color="white" size="small" />
           ) : (
-            <Text style={[styles.applyButtonLabel, !selectedId && styles.applyButtonLabelDisabled]}>적용하기</Text>
+            <Text style={[styles.applyButtonLabel, !selectedId && styles.applyButtonLabelDisabled]}>{t('documentSelectSheet.applyButton')}</Text>
           )}
         </Pressable>
       </BottomSheet>
