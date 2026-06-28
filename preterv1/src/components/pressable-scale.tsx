@@ -15,6 +15,11 @@ export function PressableScale({ style, scaleTo = 0.92, hapticStyle = Haptics.Im
 
   return (
     <Pressable
+      // Android 기본 ripple은 둥글게 잘려있지 않은(borderRadius 없는) 바깥 Pressable
+      // 영역 전체에 그려져서, 안쪽의 둥근 버튼(Animated.View)보다 더 넓은 사각형
+      // 모양의 회색 잔상이 누를 때마다 깜빡이며 보였다 — 이미 자체 스케일+햅틱
+      // 피드백이 있으니 기본 ripple은 투명하게 꺼서 그 잔상을 없앤다.
+      android_ripple={{ color: 'transparent' }}
       {...rest}
       onPressIn={(e) => {
         if (hapticStyle !== null) Haptics.impactAsync(hapticStyle);

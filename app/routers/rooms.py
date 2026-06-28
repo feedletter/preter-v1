@@ -11,7 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from app.core import auth_service
-from app.core.meeting_summary import finalize_meeting
+from app.core.meeting_summary import spawn_finalize_meeting
 from app.core.room_state import room_manager
 from app.core.supabase_client import get_client
 
@@ -329,7 +329,7 @@ async def end_room(room_id: str, credentials: HTTPAuthorizationCredentials = Dep
         blocks = live_room.pop_session_buffer()
         # After Meeting PRD 6-3/8-1 — speaker_blocks 적재 + AI 요약 생성은 응답을 막지
         # 않게 fire-and-forget으로 띄운다(요약 생성은 수 초~수십 초 걸릴 수 있음).
-        asyncio.create_task(finalize_meeting(room_id, blocks))
+        spawn_finalize_meeting(room_id, blocks)
 
 
 def _end_room_row(room_id: str, host_user_id: str, need_host_name: bool) -> str | None:

@@ -21,6 +21,22 @@ logger = logging.getLogger(__name__)
 
 MODEL = "claude-sonnet-4-6"
 
+# asyncio 이벤트 루프는 Task를 약한 참조로만 들고 있다 — 호출부(rooms.py/ws.py)가
+# `asyncio.create_task(finalize_meeting(...))`의 반환값을 변수에 저장하지 않고 바로
+# 요청/소켓 핸들러를 빠져나가면, GC가 그 Task를 완료 전에 수거해버릴 수 있다(Python
+# asyncio 공식 문서가 명시한 footgun). finalize_meeting은 Claude API 호출 때문에
+# 수 초가 걸리는데 요청은 즉시 끝나서 이 창이 실제로 크다 — "미팅 요약을 불러오지
+# 못했어요"가 거의 항상 재현된 근본 원인. 모듈 레벨 set에 강한 참조를 보관해 완료
+# 시점(add_done_callback)까지 GC되지 않게 막는다.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def spawn_finalize_meeting(meeting_room_id: str, blocks: list[dict]) -> asyncio.Task:
+    task = asyncio.create_task(finalize_meeting(meeting_room_id, blocks))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
 SUMMARY_SYSTEM_PROMPT = """당신은 B2B 비즈니스 미팅 요약 전문가입니다.
 아래 미팅 대화록을 분석해 JSON 형식으로만 응답하세요.
 응답 언어는 반드시 {base_lang}으로 작성하세요.

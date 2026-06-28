@@ -1,6 +1,6 @@
 import * as Clipboard from 'expo-clipboard';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Easing, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Easing, Image, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 
@@ -162,7 +162,11 @@ export function ParticipantsSidebar({
   }
 
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+    // 스피크/리슨 오브(SpeakListenOrb)가 useNativeDriver 애니메이션으로 별도 합성 레이어에
+    // 그려지는데, RN-Android는 그 경우 형제 View의 JSX(paint) 순서를 무시하고 깜빡이며
+    // 오브가 사이드바 위로 잠깐 올라오는 문제가 있었다 — zIndex/elevation을 명시해 항상
+    // 최상단 레이어로 고정한다(JSX 순서만으로는 부족함).
+    <View style={[StyleSheet.absoluteFill, styles.root]} pointerEvents="box-none">
       <Animated.View style={[styles.dim, { opacity: dimOpacity }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       </Animated.View>
@@ -180,7 +184,11 @@ export function ParticipantsSidebar({
             return (
               <View key={user.userId} style={styles.row}>
                 <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{initialOf(user.displayName)}</Text>
+                  {user.avatarUrl ? (
+                    <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} resizeMode="cover" />
+                  ) : (
+                    <Text style={styles.avatarText}>{initialOf(user.displayName)}</Text>
+                  )}
                 </View>
                 <View style={styles.rowTextCol}>
                   <View style={styles.nameLine}>
@@ -209,14 +217,17 @@ export function ParticipantsSidebar({
         </ScrollView>
 
         <View style={styles.footer}>
-          <Pressable style={styles.footerRow} onPress={handleCopyCode}>
-            <Text style={styles.footerLabel}>{t('participantsSidebar.meetingCode')}</Text>
-            <Text style={styles.footerValue}>{formatRoomCode(roomCode)}</Text>
-          </Pressable>
-          <Pressable style={styles.footerRow} onPress={handleCopyPassword} disabled={!password}>
-            <Text style={styles.footerLabel}>{t('participantsSidebar.meetingPassword')}</Text>
-            <Text style={styles.footerValue}>{password ?? t('participantsSidebar.passwordNotSet')}</Text>
-          </Pressable>
+          <View style={styles.footerCard}>
+            <Pressable style={styles.footerRow} onPress={handleCopyCode}>
+              <Text style={styles.footerLabel}>{t('participantsSidebar.meetingCode')}</Text>
+              <Text style={styles.footerValue}>{formatRoomCode(roomCode)}</Text>
+            </Pressable>
+            <View style={styles.footerCardDivider} />
+            <Pressable style={styles.footerRow} onPress={handleCopyPassword} disabled={!password}>
+              <Text style={styles.footerLabel}>{t('participantsSidebar.meetingPassword')}</Text>
+              <Text style={styles.footerValue}>{password ?? t('participantsSidebar.passwordNotSet')}</Text>
+            </Pressable>
+          </View>
           <Pressable style={styles.shareButton} onPress={handleShare} accessibilityRole="button">
             <Text style={styles.shareButtonLabel}>{t('participantsSidebar.shareButton')}</Text>
           </Pressable>
@@ -227,6 +238,10 @@ export function ParticipantsSidebar({
 }
 
 const styles = StyleSheet.create({
+  root: {
+    zIndex: 100,
+    elevation: 100,
+  },
   dim: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.4)',
@@ -247,13 +262,16 @@ const styles = StyleSheet.create({
   },
   list: {
     flex: 1,
-    marginTop: 16,
-    gap: 12,
+    marginTop: 8,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    minHeight: 64,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Brand.borderDisabled,
   },
   avatar: {
     width: 42,
@@ -262,6 +280,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#E8EBFF',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
   },
   avatarText: {
     fontSize: 16,
@@ -308,10 +331,20 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     gap: 12,
   },
+  footerCard: {
+    backgroundColor: '#F5F6FA',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+  },
+  footerCardDivider: {
+    height: 1,
+    backgroundColor: Brand.borderDisabled,
+  },
   footerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingVertical: 12,
   },
   footerLabel: {
     fontSize: 13,

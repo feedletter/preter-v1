@@ -29,21 +29,65 @@ function flagEmoji(countryCode: string | null): string {
   return FLAG_BY_COUNTRY[countryCode] ?? '';
 }
 
-function formatMeta(summary: MeetingSummary | null): string {
+// TopBar용 압축 한 줄 메타 — Figma 84:483의 TopBar(429:3160)는 "2026.05.09 ·12:09 · 62m"
+// 형태의 숫자 위주 압축 표기를 쓴다(카드 안 헤더의 풀 날짜 표기와는 다른 용도).
+function formatTopBarMeta(summary: MeetingSummary | null): string {
   if (!summary) return '';
   const parts: string[] = [];
   if (summary.started_at) {
     const d = new Date(summary.started_at);
-    parts.push(`${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`);
+    parts.push(
+      `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')} ·${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+    );
   }
   if (summary.duration_minutes != null) parts.push(`${summary.duration_minutes}m`);
-  if (summary.participants.length > 0) parts.push(summary.participants.join(', '));
   return parts.join(' · ');
+}
+
+// 카드 헤더용 풀 날짜/시간 표기 — Figma 429:3175 "2025년 8월 14일 (수) · 오후 2:00 – 3:12 · 72분".
+// Intl이 로케일별(ko/en/ja)로 요일/오전오후 표기를 알아서 맞춰준다.
+function formatCardMetaLine1(summary: MeetingSummary | null): string {
+  if (!summary?.started_at) return '';
+  const locale = i18n.language;
+  const started = new Date(summary.started_at);
+  const dateStr = new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' }).format(
+    started,
+  );
+  const timeFormatter = new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit', hour12: true });
+  const parts = [dateStr];
+  const endIso = summary.ended_at;
+  if (endIso) {
+    parts.push(`${timeFormatter.format(started)} – ${timeFormatter.format(new Date(endIso))}`);
+  } else {
+    parts.push(timeFormatter.format(started));
+  }
+  if (summary.duration_minutes != null) parts.push(`${summary.duration_minutes}분`);
+  return parts.join(' · ');
+}
+
+function formatCardMetaLine2(summary: MeetingSummary | null): string {
+  return summary?.participants.join(' · ') ?? '';
 }
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function groupActionItemsByAssignee(
+  items: { assignee: string; content: string; due: string }[],
+): { assignee: string; items: { assignee: string; content: string; due: string }[] }[] {
+  const order: string[] = [];
+  const groups: Record<string, { assignee: string; content: string; due: string }[]> = {};
+  for (const item of items) {
+    const key = item.assignee || '';
+    if (!groups[key]) {
+      groups[key] = [];
+      order.push(key);
+    }
+    groups[key].push(item);
+  }
+  return order.map((assignee) => ({ assignee, items: groups[assignee] }));
 }
 
 type Tab = 'summary' | 'script';
@@ -101,6 +145,8 @@ export default function AfterMeetingScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
 
+      {/* Figma 84:483 TopBar(297:22943) — 뒤로가기 아이콘 옆에 제목/메타가 좌측 정렬로 붙는다
+          (이전엔 제목 컬럼을 가운데 정렬하고 우측에 빈 스페이서를 둬서 중앙 타이틀처럼 보였음). */}
       <View style={styles.topBar}>
         <Pressable onPress={() => router.back()} hitSlop={8} accessibilityLabel={t('afterMeeting.back')} accessibilityRole="button">
           <Text style={styles.backIcon}>‹</Text>
@@ -109,17 +155,20 @@ export default function AfterMeetingScreen() {
           <Text style={styles.topBarTitle} numberOfLines={1}>
             {summary?.title ?? t('afterMeeting.title')}
           </Text>
-          {!!summary && <Text style={styles.topBarMeta} numberOfLines={1}>{formatMeta(summary)}</Text>}
+          {!!summary && <Text style={styles.topBarMeta} numberOfLines={1}>{formatTopBarMeta(summary)}</Text>}
         </View>
-        <View style={styles.backIcon} />
       </View>
 
+      {/* Figma 429:3133 "ordertaps" — 탭 전체 너비를 반씩 차지하고, 선택된 탭만 2px 검정
+          밑줄 인디케이터가 붙는다(이전엔 좌우 패딩 20 + 텍스트 밑줄로 디자인이 달랐음). */}
       <View style={styles.tabRow}>
         <Pressable style={styles.tabButton} onPress={() => setTab('summary')} accessibilityRole="button" accessibilityState={{ selected: tab === 'summary' }}>
           <Text style={[styles.tabLabel, tab === 'summary' && styles.tabLabelSelected]}>{t('afterMeeting.tabSummary')}</Text>
+          <View style={[styles.tabIndicator, tab === 'summary' && styles.tabIndicatorSelected]} />
         </Pressable>
         <Pressable style={styles.tabButton} onPress={() => setTab('script')} accessibilityRole="button" accessibilityState={{ selected: tab === 'script' }}>
           <Text style={[styles.tabLabel, tab === 'script' && styles.tabLabelSelected]}>{t('afterMeeting.tabScript')}</Text>
+          <View style={[styles.tabIndicator, tab === 'script' && styles.tabIndicatorSelected]} />
         </Pressable>
       </View>
 
@@ -175,6 +224,7 @@ function SummaryTab({
   }
 
   const content = summary.summary;
+  const actionGroups = groupActionItemsByAssignee(content.action_items);
 
   return (
     <FlatList
@@ -183,46 +233,63 @@ function SummaryTab({
       data={[content]}
       keyExtractor={() => 'summary-card'}
       renderItem={() => (
+        // Figma 87:5 Content — 카드 헤더(제목+메타)가 한 줄 요약 라벨 없이 그 자체로
+        // 카드의 헤드라인 역할을 하고, 섹션 사이는 marginTop이 아니라 gap:20으로 분리된다.
         <View style={styles.summaryCard}>
-          <Text style={styles.sectionTitle}>{t('afterMeeting.oneLinerSection')}</Text>
-          <Text style={styles.oneLinerText}>{content.one_liner}</Text>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardHeaderTitle}>{content.one_liner}</Text>
+            <View>
+              <Text style={styles.cardHeaderMeta}>{formatCardMetaLine1(summary)}</Text>
+              <Text style={styles.cardHeaderMeta}>{formatCardMetaLine2(summary)}</Text>
+            </View>
+          </View>
 
-          <Text style={[styles.sectionTitle, styles.sectionSpacing]}>✅ {t('afterMeeting.decisionsSection')}</Text>
-          {content.decisions.length === 0 ? (
-            <Text style={styles.emptySectionText}>{t('afterMeeting.noDecisions')}</Text>
-          ) : (
-            content.decisions.map((decision, idx) => (
-              <Text key={idx} style={styles.bulletText}>
-                · {decision}
-              </Text>
-            ))
-          )}
+          <View style={styles.sectionBlock}>
+            <Text style={styles.sectionTitle}>✅ {t('afterMeeting.decisionsSection')}</Text>
+            {content.decisions.length === 0 ? (
+              <Text style={styles.emptySectionText}>{t('afterMeeting.noDecisions')}</Text>
+            ) : (
+              content.decisions.map((decision, idx) => (
+                <Text key={idx} style={styles.bulletText}>
+                  · {decision}
+                </Text>
+              ))
+            )}
+          </View>
 
-          <Text style={[styles.sectionTitle, styles.sectionSpacing]}>📌 {t('afterMeeting.actionItemsSection')}</Text>
-          {content.action_items.length === 0 ? (
-            <Text style={styles.emptySectionText}>{t('afterMeeting.noActionItems')}</Text>
-          ) : (
-            content.action_items.map((item, idx) => (
-              <Text key={idx} style={styles.bulletText}>
-                · {item.assignee ? `[${item.assignee}] ` : ''}
-                {item.content}
-                {item.due ? ` (${item.due})` : ''}
-              </Text>
-            ))
-          )}
+          <View style={styles.sectionBlock}>
+            <Text style={styles.sectionTitle}>📌 {t('afterMeeting.actionItemsSection')}</Text>
+            {actionGroups.length === 0 ? (
+              <Text style={styles.emptySectionText}>{t('afterMeeting.noActionItems')}</Text>
+            ) : (
+              actionGroups.map((group) => (
+                <View key={group.assignee || '_'} style={styles.assigneeGroup}>
+                  {!!group.assignee && <Text style={styles.assigneeName}>{group.assignee}</Text>}
+                  {group.items.map((item, idx) => (
+                    <Text key={idx} style={styles.bulletText}>
+                      · {item.content}
+                      {item.due ? ` ~ ${item.due}` : ''}
+                    </Text>
+                  ))}
+                </View>
+              ))
+            )}
+          </View>
 
-          <Text style={[styles.sectionTitle, styles.sectionSpacing]}>🗓 {t('afterMeeting.followUpSection')}</Text>
-          {content.follow_up_schedule.length === 0 ? (
-            <Text style={styles.emptySectionText}>{t('afterMeeting.noFollowUp')}</Text>
-          ) : (
-            content.follow_up_schedule.map((item, idx) => (
-              <Text key={idx} style={styles.bulletText}>
-                · {item.date ? `[${item.date}] ` : ''}
-                {item.title}
-                {item.note ? ` — ${item.note}` : ''}
-              </Text>
-            ))
-          )}
+          <View style={styles.sectionBlock}>
+            <Text style={styles.sectionTitle}>🗓 {t('afterMeeting.followUpSection')}</Text>
+            {content.follow_up_schedule.length === 0 ? (
+              <Text style={styles.emptySectionText}>{t('afterMeeting.noFollowUp')}</Text>
+            ) : (
+              content.follow_up_schedule.map((item, idx) => (
+                <Text key={idx} style={styles.bulletText}>
+                  · {item.date ? `${item.date} · ` : ''}
+                  {item.title}
+                  {item.note ? ` — ${item.note}` : ''}
+                </Text>
+              ))
+            )}
+          </View>
         </View>
       )}
     />
@@ -330,13 +397,15 @@ function ScriptTab({ roomId }: { roomId: string | undefined }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: Brand.surfaceBackground,
   },
+  // Figma 297:22943 TopBar — 뒤로가기 아이콘 + 좌측 정렬 제목/메타 컬럼.
   topBar: {
     height: 56,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    gap: 6,
+    paddingHorizontal: 16,
   },
   backIcon: {
     fontSize: 26,
@@ -345,7 +414,8 @@ const styles = StyleSheet.create({
   },
   topBarTextCol: {
     flex: 1,
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    gap: 2,
   },
   topBarTitle: {
     fontSize: 17,
@@ -355,27 +425,37 @@ const styles = StyleSheet.create({
   topBarMeta: {
     fontSize: 12,
     color: Brand.textSecondary,
-    marginTop: 2,
   },
+  // Figma 429:3133 "ordertaps" — 두 탭이 화면 너비를 절반씩 차지하고, 선택된 탭만
+  // 텍스트 아래에 2px 검정 인디케이터가 붙는다(밑줄이 아니라 별도 바).
   tabRow: {
     flexDirection: 'row',
-    paddingHorizontal: 20,
-    gap: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: Brand.borderDisabled,
+    height: 48,
+    backgroundColor: Brand.surfaceBackground,
   },
   tabButton: {
-    paddingVertical: 12,
+    flex: 1,
+    alignItems: 'center',
+    paddingTop: 14,
+    gap: 10,
   },
   tabLabel: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '500',
     color: Brand.textDisabled,
   },
   tabLabelSelected: {
     fontWeight: '700',
     color: Brand.textPrimary,
-    textDecorationLine: 'underline',
+  },
+  tabIndicator: {
+    height: 1,
+    width: '100%',
+    backgroundColor: Brand.borderDisabled,
+  },
+  tabIndicatorSelected: {
+    height: 2,
+    backgroundColor: Brand.textPrimary,
   },
   scrollArea: {
     flex: 1,
@@ -418,34 +498,53 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Brand.textSecondary,
   },
+  // Figma 87:5 Content — 섹션 간 간격은 marginTop 누적이 아니라 카드 자체의 gap:20.
   summaryCard: {
     backgroundColor: 'white',
     borderRadius: 12,
     padding: 14,
+    gap: 20,
+  },
+  cardHeader: {
+    gap: 15,
+  },
+  cardHeaderTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Brand.textPrimary,
+    lineHeight: 22,
+  },
+  cardHeaderMeta: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: Brand.textSecondary,
+    lineHeight: 13,
+  },
+  sectionBlock: {
+    gap: 6,
   },
   sectionTitle: {
     fontSize: 14,
     fontWeight: '700',
     color: Brand.textPrimary,
   },
-  sectionSpacing: {
-    marginTop: 16,
+  assigneeGroup: {
+    marginTop: 8,
+    gap: 6,
   },
-  oneLinerText: {
-    fontSize: 13,
+  assigneeName: {
+    fontSize: 12,
+    fontWeight: '700',
     color: Brand.textPrimary,
-    marginTop: 6,
   },
   bulletText: {
     fontSize: 13,
     color: Brand.textPrimary,
-    marginTop: 6,
     lineHeight: 19,
   },
   emptySectionText: {
     fontSize: 13,
     color: Brand.textDisabled,
-    marginTop: 6,
   },
   scriptContent: {
     padding: 16,

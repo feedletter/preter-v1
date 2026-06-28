@@ -9,6 +9,7 @@ export type RoomUser = {
   displayName: string;
   language: string;
   role: 'host' | 'member' | 'guest';
+  avatarUrl: string | null;
 };
 
 export type LiveSessionEvent =

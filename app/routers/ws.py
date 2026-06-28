@@ -8,7 +8,7 @@ from app.core.auth import AuthError, verify_token
 from app.core.gemini_session import GeminiLiveSession
 from app.core.guest_auth import GuestAuthError, verify_guest_token
 from app.core.meeting_context import fetch_meeting_context
-from app.core.meeting_summary import finalize_meeting
+from app.core.meeting_summary import spawn_finalize_meeting
 from app.core.room_state import Participant, room_manager
 from app.core.supabase_client import get_client
 
@@ -108,10 +108,12 @@ def _load_room_row(room_id: str) -> dict | None:
 
 
 def _load_participant_row(room_id: str, user_id: str, is_guest: bool) -> dict | None:
+    # users(avatar_url) — meeting_participants.user_id -> users.id FK를 통한 PostgREST
+    # 임베드 조회. 게스트는 user_id가 null이라 항상 users가 null로 와서 자연히 fallback된다.
     query = (
         get_client()
         .table("meeting_participants")
-        .select("id, display_name, role, language, is_kicked")
+        .select("id, display_name, role, language, is_kicked, users(avatar_url)")
         .eq("room_id", room_id)
     )
     query = query.eq("guest_session_id", user_id) if is_guest else query.eq("user_id", user_id)
@@ -182,12 +184,14 @@ async def room_session(websocket: WebSocket, room_id: str, token: str):
         room_id, instructions, keywords, status=room_row["status"], started_at=room_row.get("started_at")
     )
 
+    embedded_user = participant_row.get("users") or {}
     participant = Participant(
         user_id=user_id,
         websocket=websocket,
         display_name=participant_row["display_name"],
         language=participant_row["language"],
         role=participant_row["role"],
+        avatar_url=embedded_user.get("avatar_url"),
     )
     await room.add_participant(participant)
 
@@ -220,7 +224,7 @@ async def room_session(websocket: WebSocket, room_id: str, token: str):
                 # After Meeting PRD 6-3/8-1 — 호스트가 명시적으로 종료하지 않고 전원이
                 # 퇴장한 경우에도 동일하게 speaker_blocks 적재 + AI 요약 생성을 트리거한다.
                 blocks = room.pop_session_buffer()
-                asyncio.create_task(finalize_meeting(room_id, blocks))
+                spawn_finalize_meeting(room_id, blocks)
         await room_manager.remove_if_empty(room_id)
 
 

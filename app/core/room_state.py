@@ -29,6 +29,20 @@ SUPPORTED_LANGUAGES = ("ko", "en", "ja", "zh")
 # 근사한다 — 정확한 국적 데이터가 추가되면 이 매핑을 대체할 것.
 LANGUAGE_TO_COUNTRY = {"ko": "KR", "en": "US", "ja": "JP", "zh": "CN"}
 
+# 프로필의 통역 언어 선택지(language-setting-sheet.tsx ALL_LANGUAGES)는 'sg'(싱가포르
+# 영어)를 5번째 옵션으로 노출하지만, Gemini Live에는 별도 언어 코드가 없고 SUPPORTED_LANGUAGES
+# 에도 'sg'가 없다 — 정규화 없이 그대로 쓰면 영어 화자/싱가포르 영어 화자가 같은 방을
+# 써도 같은 언어로 인식되지 않아 (1) bypass가 안 되고 (2) Gemini에 잘못된 target_lang="sg"가
+# 그대로 전달돼 통역이 깨진다("영어가 영어로 다시 번역되는 느낌" 버그의 원인). 화자/청자
+# 언어를 비교하거나 Gemini target_lang으로 쓰기 전에는 항상 이 매핑을 거친다.
+_LANGUAGE_ALIASES = {"sg": "en"}
+
+
+def _normalize_language(language: str | None) -> str | None:
+    if language is None:
+        return None
+    return _LANGUAGE_ALIASES.get(language, language)
+
 
 @dataclass
 class Participant:
@@ -37,6 +51,7 @@ class Participant:
     display_name: str
     language: str
     role: str  # "host" | "member" | "guest"
+    avatar_url: str | None = None
 
 
 @dataclass
@@ -118,6 +133,7 @@ class RoomState:
                     "displayName": p.display_name,
                     "language": p.language,
                     "role": p.role,
+                    "avatarUrl": p.avatar_url,
                 }
                 for p in self.participants.values()
             ],
@@ -178,11 +194,11 @@ class RoomState:
 
         turn.last_audio_at = time.monotonic()
         speaker = self.participants.get(user_id)
-        speaker_language = speaker.language if speaker else None
+        speaker_language = _normalize_language(speaker.language if speaker else None)
 
         # 동일 언어 청자에게는 통역 없이 원본 PCM을 그대로 전달(bypass).
         for other in list(self.participants.values()):
-            if other.user_id == user_id or other.language != speaker_language:
+            if other.user_id == user_id or _normalize_language(other.language) != speaker_language:
                 continue
             try:
                 await other.websocket.send_bytes(chunk)
@@ -219,12 +235,13 @@ class RoomState:
         if speaker is None:
             return
 
+        speaker_language = _normalize_language(speaker.language)
         listener_languages = {
-            p.language for p in self.participants.values() if p.user_id != speaker_id
+            _normalize_language(p.language) for p in self.participants.values() if p.user_id != speaker_id
         }
-        foreign_languages = listener_languages - {speaker.language}
+        foreign_languages = listener_languages - {speaker_language}
         # 외국어 청자가 없어도 원문 자막(SUBTITLE_ORIGINAL) 추출용으로 세션 1개는 항상 띄운다.
-        target_languages = foreign_languages or {speaker.language}
+        target_languages = foreign_languages or {speaker_language}
 
         sessions: dict[str, GeminiLiveSession] = {}
         for target_lang in target_languages:
@@ -248,13 +265,13 @@ class RoomState:
 
         # 원문 자막/저장용 입력 transcription은 세션 하나만 채택한다 — 발화자 본인 언어로
         # 띄운 세션(있으면)을 우선하고, 없으면(전원 외국어 청자) 첫 번째 세션으로 대체.
-        primary_lang = speaker.language if speaker.language in sessions else next(iter(sessions))
+        primary_lang = speaker_language if speaker_language in sessions else next(iter(sessions))
 
         turn = ActiveTurn(speaker_id=speaker_id, sessions=sessions, primary_lang=primary_lang)
         self.active_turn = turn
 
         for target_lang, session in sessions.items():
-            is_origin_only = target_lang == speaker.language
+            is_origin_only = target_lang == speaker_language
             task = asyncio.create_task(self._relay_session(turn, target_lang, session, is_origin_only))
             turn.relay_tasks.append(task)
 
@@ -318,7 +335,7 @@ class RoomState:
 
     async def _send_to_language(self, language: str, exclude_user_id: str, payload: dict) -> None:
         for participant in list(self.participants.values()):
-            if participant.user_id == exclude_user_id or participant.language != language:
+            if participant.user_id == exclude_user_id or _normalize_language(participant.language) != language:
                 continue
             await self._send_json(participant, payload)
 
@@ -379,9 +396,10 @@ class RoomState:
         if speaker is None:
             return
 
+        speaker_language = _normalize_language(speaker.language)
         translations = {lang: None for lang in SUPPORTED_LANGUAGES}
         # 화자 본인 언어는 통역이 아니라 원문 그대로 동일 키에 복사(PRD 7-2).
-        translations[speaker.language] = turn.original_text
+        translations[speaker_language] = turn.original_text
         for lang, text in turn.translations.items():
             translations[lang] = text
 
@@ -390,8 +408,8 @@ class RoomState:
             {
                 "speaker_user_id": speaker.user_id if speaker.role != "guest" else None,
                 "speaker_name": speaker.display_name,
-                "country_code": LANGUAGE_TO_COUNTRY.get(speaker.language),
-                "original_language": speaker.language,
+                "country_code": LANGUAGE_TO_COUNTRY.get(speaker_language),
+                "original_language": speaker_language,
                 "original_text": turn.original_text,
                 "translations": translations,
                 "started_at": turn.started_at.isoformat(),

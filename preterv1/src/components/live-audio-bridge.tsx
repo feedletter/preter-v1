@@ -12,7 +12,15 @@ import type { LiveSessionEvent } from '@/lib/live-session';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
 const WS_URL = API_URL.replace(/^http/, 'ws');
-const TARGET_SR = 16000; // Gemini Live 입력 규격
+const TARGET_SR: number = 16000; // Gemini Live 입력 규격
+// Gemini Live가 돌려주는 통역 오디오는 24kHz 고정 규격(공식 스펙) — 재생용 AudioContext를
+// 이 값으로 고정한다. new AudioContext()를 옵션 없이 만들면 기기 하드웨어 네이티브
+// sample rate(44100/48000 등 기기마다 다름)로 잡히는데, react-native-audio-api의
+// AudioBufferQueueSourceNode가 버퍼 자체의 sampleRate와 context의 실제 출력 sampleRate가
+// 다를 때 자동 리샘플링을 보장하지 않아 "다른 기기에서는 정상, 어떤 기기에서는 빠르거나
+// 느리게 들리는" 간헐적 버그의 원인이 된다(2026-06-28 발견). context를 고정값으로
+// 만들어 기기 하드웨어 native rate에 대한 의존을 완전히 없앤다.
+const PLAYBACK_SR = 24000;
 const MAX_RECONNECT_DELAY_MS = 10000;
 
 // 엔진(이제 네이티브 오디오 모듈)이 RN으로 올려보내는 오디오/소켓 생명주기 신호.
@@ -116,9 +124,16 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
       if (!context || !queue) return;
       const int16 = new Int16Array(arrayBuffer);
       if (int16.length === 0) return;
-      const float32 = new Float32Array(int16.length);
+      let float32: Float32Array = new Float32Array(int16.length);
       for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
-      const buffer = context.createBuffer(1, float32.length, 16000);
+      // bypass 원본은 16kHz로 들어오는데 재생 context는 PLAYBACK_SR(24kHz) 고정이라
+      // 그대로 createBuffer에 16000을 선언해버리면 큐 안에서 통역 오디오(24kHz 선언)와
+      // 섞일 때 노드가 buffer.sampleRate를 무시하고 context rate로만 재생해 1.5배 빠르게
+      // 들린다 — 미리 PLAYBACK_SR로 리샘플링해서 버퍼에 선언하는 rate와 실제 재생 rate를
+      // 항상 일치시킨다.
+      if (TARGET_SR !== PLAYBACK_SR) float32 = resample(float32, TARGET_SR, PLAYBACK_SR);
+      if (float32.length === 0) return;
+      const buffer = context.createBuffer(1, float32.length, PLAYBACK_SR);
       buffer.copyToChannel(float32, 0);
       queue.enqueueBuffer(buffer);
     }
@@ -128,7 +143,7 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
       const queue = queueRef.current;
       if (!context || !queue) return;
       context
-        .decodePCMInBase64(base64, 24000, 1, false)
+        .decodePCMInBase64(base64, PLAYBACK_SR, 1, false)
         .then((buffer) => queue.enqueueBuffer(buffer))
         .catch(() => {
           // 디코딩 실패한 통역 오디오 조각 1개는 그냥 버린다 — 세션 전체를 끊을 정도는 아님.
@@ -273,7 +288,7 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
         if (cancelled) return;
         logCrashBreadcrumb('live-audio-bridge: setAudioSessionActivity done');
 
-        context = new AudioContext();
+        context = new AudioContext({ sampleRate: PLAYBACK_SR });
         audioContextRef.current = context;
         logCrashBreadcrumb('live-audio-bridge: AudioContext created');
 

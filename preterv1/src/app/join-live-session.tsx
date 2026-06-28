@@ -2,15 +2,16 @@ import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AudioManager } from 'react-native-audio-api';
 import { useTranslation } from 'react-i18next';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AvatarStack } from '@/components/avatar-stack';
 import { LiveAudioBridge, LiveAudioBridgeHandle } from '@/components/live-audio-bridge';
 import { ParticipantsSidebar } from '@/components/participants-sidebar';
 import { PressableScale } from '@/components/pressable-scale';
+import { ORB_RADIUS, SpeakListenOrb } from '@/components/speak-listen-orb';
 import { Brand } from '@/constants/theme';
 import { logEvent } from '@/lib/firebase';
 import { LiveSessionEvent, RoomUser } from '@/lib/live-session';
@@ -156,6 +157,7 @@ export default function JoinLiveSessionScreen() {
           displayName: profile.name?.trim() || 'Member',
           language: profile.primary_language,
           role: 'member',
+          avatarUrl: profile.avatar_url,
         };
         usersRef.current = [myEntry];
         setUsers([myEntry]);
@@ -385,9 +387,10 @@ export default function JoinLiveSessionScreen() {
           ? t('hostLiveSession.statusSpeaking', { dots })
           : t('hostLiveSession.statusListening', { dots });
   const statusColor = audioState === 'muted' ? Brand.error : audioState === 'speaking' ? Brand.primary : Brand.textPrimary;
+  const insets = useSafeAreaInsets();
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="dark" />
 
       {roomId ? (
@@ -453,9 +456,11 @@ export default function JoinLiveSessionScreen() {
           </ScrollView>
         )}
 
-        <SpeakListenBar state={audioState === 'muted' ? 'idle' : audioState} />
+        <View style={styles.speakListenOrbWrap} pointerEvents="none">
+          <SpeakListenOrb state={audioState === 'muted' ? 'idle' : audioState} />
+        </View>
 
-        <View style={styles.bottomBar}>
+        <View style={[styles.bottomBar, { paddingBottom: insets.bottom }]}>
           {/* Member는 미팅 진행 컨트롤이 없다 — 빈 프레임(나가기는 TopBar 뒤로가기로만 가능) */}
           <View style={styles.emptyLeftFrame} />
           {roomStatus === 'active' && (
@@ -540,72 +545,6 @@ function SpeakerBlockView({
   );
 }
 
-// speak-bar(Figma 84:420)/listen-bar(186:2887) 사이즈 — 375 기준 프레임 폭에 대한 비율로
-// 변환해서 화면 폭에 관계없이 동일 비율을 유지한다. listen-bar가 speak-bar보다 더 길다.
-// Animated.Value.interpolate로 width를 '34.4%' 같은 퍼센트 문자열로 보간하면 RN에서
-// width가 끝까지 적용되지 않고 0/undefined로 멈춰 막대 자체가 안 보이는 경우가 있다
-// (실제 리포트된 버그) — 화면 폭 기준 고정 px로 미리 변환해 숫자로만 보간한다.
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const SPEAK_GLOW_WIDTH = SCREEN_WIDTH * 0.344;
-const SPEAK_LINE_WIDTH = SCREEN_WIDTH * 0.295;
-const LISTEN_GLOW_WIDTH = SCREEN_WIDTH * 0.547;
-const LISTEN_LINE_WIDTH = SCREEN_WIDTH * 0.469;
-
-// glow(Background gradient)는 막대(Rectangle)와 달리 불투명 색이 아니라 40% 알파 +
-// 블러를 쓴다(Figma Layer blur). RN View엔 CSS blur 필터가 없어 shadow로 흉내낸다.
-const SPEAK_GLOW_COLOR = 'rgba(20,40,160,0.4)';
-const LISTEN_GLOW_COLOR = 'rgba(255,51,75,0.4)';
-
-function SpeakListenBar({ state }: { state: 'speaking' | 'listening' | 'idle' }) {
-  const pulse = useRef(new Animated.Value(1)).current;
-  const morph = useRef(new Animated.Value(state === 'listening' ? 1 : 0)).current;
-
-  useEffect(() => {
-    if (state === 'idle') {
-      pulse.setValue(1);
-      return;
-    }
-    pulse.setValue(1);
-    // 발광(glow)과 막대 둘 다 발화 턴마다 같이 점멸한다.
-    const blink = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 0.3, duration: 500, useNativeDriver: false }),
-        Animated.timing(pulse, { toValue: 1, duration: 500, useNativeDriver: false }),
-      ]),
-    );
-    blink.start();
-    // speak-bar ↔ listen-bar 전환 시 길이가 한 번 더 늘어났다가(overshoot) 목표 길이로
-    // 줄어드는 탄성 모션을 주기 위해 spring을 사용 — width는 네이티브 드라이버 미지원이라 false.
-    Animated.spring(morph, {
-      toValue: state === 'listening' ? 1 : 0,
-      useNativeDriver: false,
-      bounciness: 14,
-      speed: 8,
-    }).start();
-    return () => blink.stop();
-  }, [state, pulse, morph]);
-
-  if (state === 'idle') {
-    return <View style={styles.speakListenBarWrap} />;
-  }
-
-  const lineColor = state === 'speaking' ? Brand.primary : Brand.error;
-  const glowColor = state === 'speaking' ? SPEAK_GLOW_COLOR : LISTEN_GLOW_COLOR;
-  const glowWidth = morph.interpolate({ inputRange: [0, 1], outputRange: [SPEAK_GLOW_WIDTH, LISTEN_GLOW_WIDTH] });
-  const lineWidth = morph.interpolate({ inputRange: [0, 1], outputRange: [SPEAK_LINE_WIDTH, LISTEN_LINE_WIDTH] });
-
-  return (
-    <View style={styles.speakListenBarWrap}>
-      <Animated.View
-        style={[
-          styles.speakListenGlow,
-          { backgroundColor: glowColor, shadowColor: lineColor, opacity: pulse, width: glowWidth },
-        ]}
-      />
-      <Animated.View style={[styles.speakListenLine, { backgroundColor: lineColor, opacity: pulse, width: lineWidth }]} />
-    </View>
-  );
-}
 
 function ConfirmPopup({
   title,
@@ -775,35 +714,15 @@ const styles = StyleSheet.create({
     color: '#9A9A9A',
     textAlign: 'right',
   },
-  // Figma 84:420/186:2887 — glow/막대를 bottomBar 상단 아웃라인보다 1px 위에 딱 붙여 배치.
-  speakListenBarWrap: {
+  // 오브의 가로 중심을 bottomBar 상단 경계선에 맞춘다 — 위쪽 절반만 보이고 아래쪽 절반은
+  // bottomBar 배경에 가려진다 (host-live-session.tsx와 동일 패턴).
+  speakListenOrbWrap: {
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: BOTTOM_BAR_HEIGHT + 1,
-    height: 8,
+    bottom: BOTTOM_BAR_HEIGHT - ORB_RADIUS,
     alignItems: 'center',
     justifyContent: 'center',
-    // 다른 절대배치 레이어(콘텐츠 스크롤뷰 경계 등)에 가려 안 보이는 경우를 방지.
-    zIndex: 5,
-    pointerEvents: 'none',
-  },
-  speakListenGlow: {
-    position: 'absolute',
-    height: 8,
-    borderRadius: 12,
-    // Figma "Layer blur"(9px)를 RN에는 blur 필터가 없어 shadow로 흉내낸다 — 다만 Android는
-    // View shadow*를 렌더링하지 않으므로(elevation만 지원, 색상도 무시) 박스 자체의
-    // backgroundColor(반투명)에 의존한다. 두께를 4 → 8로 올려 실기기에서도 또렷이 보이게 한다.
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 9,
-    elevation: 6,
-  },
-  speakListenLine: {
-    // 0.5px는 일부 기기 밀도에서 반올림되어 사실상 안 보이는 문제가 있었다 — 3px로 키움.
-    height: 3,
-    borderRadius: 1.5,
   },
   bottomBar: {
     height: BOTTOM_BAR_HEIGHT,
@@ -872,6 +791,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   popupButton: {
+    flex: 1,
     paddingHorizontal: 16,
     paddingVertical: 14,
     alignItems: 'center',
@@ -881,9 +801,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '500',
     color: Brand.border,
+    textAlign: 'center',
   },
   popupButtonLabelConfirm: {
     fontSize: 15,
     fontWeight: '700',
+    textAlign: 'center',
   },
 });
