@@ -259,15 +259,27 @@ export default function GuestLiveSessionScreen() {
 
   function upsertSpeakerBlock(speakerId: string, mutate: (block: SpeakerMessage) => void) {
     setMessages((prev) => {
+      // Floor control상 동시에 열려 있는 발화 턴은 1개뿐이어야 한다. TURN_COMPLETE 누락 등
+      // 어떤 이유로든 다른 화자 명의의 블록이 안 닫힌 채 남아 있으면, 화자A→화자B→화자A
+      // 순서로 말했을 때 화자A의 두 번째 발화 텍스트가 직전(화자B 등)의 오래된 블록에
+      // 잘못 이어붙는 버그가 있었다 — 새 이벤트가 들어오면 다른 화자 명의로 열려 있는
+      // 블록을 먼저 강제로 마감해서, 항상 "현재 화자" 단 하나만 open 상태이게 보장한다.
+      let next = prev;
+      for (const [openSpeakerId, openId] of [...openSpeakerIdRef.current]) {
+        if (openSpeakerId === speakerId) continue;
+        openSpeakerIdRef.current.delete(openSpeakerId);
+        next = next.map((m) => (m.id === openId && m.kind === 'speaker' ? { ...m, isFinal: true } : m));
+      }
+
       const openId = openSpeakerIdRef.current.get(speakerId);
-      const existingIndex = openId ? prev.findIndex((m) => m.id === openId) : -1;
+      const existingIndex = openId ? next.findIndex((m) => m.id === openId) : -1;
 
       if (existingIndex >= 0) {
-        const next = [...prev];
-        const block = { ...(next[existingIndex] as SpeakerMessage) };
+        const updated = [...next];
+        const block = { ...(updated[existingIndex] as SpeakerMessage) };
         mutate(block);
-        next[existingIndex] = block;
-        return next;
+        updated[existingIndex] = block;
+        return updated;
       }
 
       const speaker = usersRef.current.find((u) => u.userId === speakerId);
@@ -288,7 +300,7 @@ export default function GuestLiveSessionScreen() {
       mutate(newBlock);
       openSpeakerIdRef.current.set(speakerId, newBlock.id);
       Haptics.impactAsync(isMine ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium);
-      return [...prev, newBlock];
+      return [...next, newBlock];
     });
   }
 

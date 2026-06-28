@@ -227,6 +227,13 @@ def _confirm_room_row(body: ConfirmRoomRequest, host_user_id: str) -> dict:
 
     _require_room_host(body.draft_id, host_user_id)
 
+    # meeting_rooms.primary_language 컬럼은 DB 기본값이 'ko'다 — 여기서 호스트의 현재
+    # 프로필 통역 언어로 명시적으로 채워주지 않으면 매번 'ko'로 굳어진다. 그 결과 프로필
+    # 설정에서 통역 언어를 바꿔도 다음에 새로 만드는 미팅룸엔 전혀 반영이 안 됐었다
+    # (호스트 참가자 row도 결국 이 컬럼값을 그대로 복사해서 쓴다 — _start_room_row 참조).
+    profile = get_client().table("users").select("primary_language").eq("id", host_user_id).execute()
+    host_language = (profile.data[0]["primary_language"] if profile.data else None) or "ko"
+
     row = {
         "title": body.title,
         "scheduled_at": body.scheduled_at,
@@ -236,6 +243,7 @@ def _confirm_room_row(body: ConfirmRoomRequest, host_user_id: str) -> dict:
         # 사이드바에서 다시 조회해 보여줘야 해서 평문으로 저장한다 (Jay 확인).
         "password": body.password or None,
         "status": "waiting",
+        "primary_language": host_language,
         # expires_at은 NOT NULL 컬럼 — draft의 30분 임시 만료를 확정 시 24시간으로 되돌린다.
         "expires_at": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
     }

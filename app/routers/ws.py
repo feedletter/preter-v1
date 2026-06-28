@@ -151,21 +151,33 @@ async def room_session(websocket: WebSocket, room_id: str, token: str):
         return
     user_id, is_guest = auth_result
 
-    room_row = await asyncio.to_thread(_load_room_row, room_id)
+    # 방 조회와 참가자 행 조회는 서로 의존성이 없는 별도 테이블 조회라 굳이 순차로 기다릴
+    # 필요가 없다 — 동시에 실행해서 입장 레이턴시를 한 번의 왕복 시간만큼 줄인다.
+    room_row, participant_row = await asyncio.gather(
+        asyncio.to_thread(_load_room_row, room_id),
+        asyncio.to_thread(_load_participant_row, room_id, user_id, is_guest),
+    )
     if room_row is None or room_row["status"] == "ended":
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
-
-    participant_row = await asyncio.to_thread(_load_participant_row, room_id, user_id, is_guest)
     if participant_row is None or participant_row["is_kicked"]:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
     await websocket.accept()
 
-    instructions, keywords = await asyncio.to_thread(
-        fetch_meeting_context, room_row.get("project_id"), room_row.get("document_id")
-    )
+    # RoomState._system_instruction은 방이 처음 생성될 때 한 번만 굳어진다 — 이미 방이 떠
+    # 있으면(2번째 이후 참가자) fetch_meeting_context의 결과는 get_or_create가 그냥 버린다.
+    # 그런데도 매 참가자 연결마다 이 Supabase 조회(프로젝트 지시사항 + 문서 키워드, 동기
+    # I/O 2회)를 무조건 실행하고 있어서 "참가자 입장이 바로 처리 안 되고 레이턴시가 있다"는
+    # 증상의 핵심 원인이었다 — 방이 이미 떠 있으면 건너뛰고 즉시 add_participant로 넘어간다.
+    existing_room = room_manager.get(room_id)
+    if existing_room is None:
+        instructions, keywords = await asyncio.to_thread(
+            fetch_meeting_context, room_row.get("project_id"), room_row.get("document_id")
+        )
+    else:
+        instructions, keywords = None, None
     room = await room_manager.get_or_create(
         room_id, instructions, keywords, status=room_row["status"], started_at=room_row.get("started_at")
     )
