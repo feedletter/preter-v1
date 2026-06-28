@@ -142,11 +142,14 @@ def _fetch_upcoming_rows(user_id: str) -> list[dict]:
     )
     hosted_ids = {row["id"] for row in hosted.data}
 
+    # 강퇴당한 미팅은 더 이상 이 사람이 참여한 미팅으로 취급하지 않는다 — 메인 화면
+    # 목록에서도 사라져야 하므로 is_kicked=True인 참가 row는 제외한다.
     member_rooms = (
         client.table("meeting_participants")
         .select("room_id")
         .eq("user_id", user_id)
         .eq("role", "member")
+        .eq("is_kicked", False)
         .execute()
     )
     member_room_ids = [row["room_id"] for row in member_rooms.data]
@@ -211,12 +214,15 @@ def _require_meeting_access(room_id: str, user_id: str) -> dict:
     if room_row["host_user_id"] == user_id:
         return room_row
 
+    # 강퇴당한 사람은 이 미팅에 참여했던 것으로 취급하지 않는다 — After Meeting
+    # 요약/발화기록도 더 이상 보여주면 안 되므로 is_kicked 행은 참가자로 인정하지 않는다.
     participant = (
         get_client()
         .table("meeting_participants")
         .select("id")
         .eq("room_id", room_id)
         .eq("user_id", user_id)
+        .eq("is_kicked", False)
         .execute()
     )
     if not participant.data:
