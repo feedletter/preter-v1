@@ -175,16 +175,19 @@ function MeetingRow({ meeting, isLast }: { meeting: Meeting; isLast: boolean }) 
         return;
       }
 
+      // join-meeting.tsx의 첫 입장 플로우는 "참가 등록은 status와 무관하게 항상 여기서"
+      // 한다는 불변식을 갖고 있는데, 메인 화면 재입장 경로는 isLive(active)일 때만
+      // registerParticipant를 호출해서 이 불변식이 깨져 있었다 — waiting 상태로 다시
+      // 들어올 때 left_at이 안 지워지거나(한 번 나갔다 재입장 시) 프로필에서 바꾼 통역
+      // 언어가 반영 안 되는 등의 부작용이 있었다. 항상 호출해서 일관되게 맞춘다.
       let language = meeting.language;
-      if (isLive) {
-        try {
-          const profile = await getMyProfile();
-          language = profile.primary_language;
-        } catch {
-          // 프로필 조회 실패해도 기본 언어로 진행.
-        }
-        await registerParticipant(meeting.id, { role: 'member', language, audio_enabled: true });
+      try {
+        const profile = await getMyProfile();
+        language = profile.primary_language;
+      } catch {
+        // 프로필 조회 실패해도 기본 언어로 진행.
       }
+      await registerParticipant(meeting.id, { role: 'member', language, audio_enabled: true });
 
       router.push({
         pathname: '/join-live-session',

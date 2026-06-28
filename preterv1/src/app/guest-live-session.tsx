@@ -508,9 +508,14 @@ function SpeakerBlockView({
           <Text style={styles.englishBoxText} numberOfLines={message.englishExpanded ? undefined : 1}>
             {message.originalText}
           </Text>
-          <Text style={styles.englishBoxToggle}>
-            {message.englishExpanded ? t('hostLiveSession.collapse') : t('hostLiveSession.expand')}
-          </Text>
+          <View style={styles.englishBoxToggleRow}>
+            <Text style={styles.englishBoxToggle}>
+              {message.englishExpanded ? t('hostLiveSession.collapse') : t('hostLiveSession.expand')}
+            </Text>
+            {/* Figma 297:22594 — open(▾)/fold(▴) 폴리곤. 펼침 상태에 따라 180도 회전시켜
+                하나의 화살표로 두 상태를 표현한다. */}
+            <Text style={[styles.englishBoxChevron, message.englishExpanded && styles.englishBoxChevronExpanded]}>▾</Text>
+          </View>
         </Pressable>
       )}
     </View>
@@ -732,11 +737,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#9A9A9A',
   },
+  englishBoxToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 4,
+    marginTop: 4,
+  },
+  englishBoxChevron: {
+    fontSize: 10,
+    color: '#9A9A9A',
+    transform: [{ rotate: '0deg' }],
+  },
+  englishBoxChevronExpanded: {
+    transform: [{ rotate: '180deg' }],
+  },
   englishBoxToggle: {
     fontSize: 12,
     color: '#9A9A9A',
     textAlign: 'right',
-    marginTop: 4,
   },
   // Figma 84:420/186:2887 — glow/막대를 bottomBar 상단 아웃라인보다 1px 위에 딱 붙여 배치.
   speakListenBarWrap: {

@@ -77,6 +77,18 @@ export default function HostLiveSessionScreen() {
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [myDisplayName, setMyDisplayName] = useState('Host');
   const [myLanguage, setMyLanguage] = useState('ko');
+  // handleEvent는 useCallback(..., [router])로 고정돼 있어서, 그 안에서 호출되는
+  // upsertSpeakerBlock이 myUserId/myDisplayName/myLanguage를 "state 변수" 그대로
+  // 읽으면 첫 렌더 시점(null/'Host'/'ko')에 박힌 값으로 영원히 고정된다 — getMyProfile()이
+  // 비동기로 나중에 myUserId를 채워줘도 handleEvent 클로저는 그 갱신을 못 본다. 그 결과
+  // 본인이 말한 SpeakerBlock의 isMine이 항상 false로 평가돼 왼쪽 정렬로 보이는 버그가
+  // 있었다 — ref로 항상 최신값을 들고 있다가 그쪽을 읽게 한다.
+  const myUserIdRef = useRef(myUserId);
+  myUserIdRef.current = myUserId;
+  const myDisplayNameRef = useRef(myDisplayName);
+  myDisplayNameRef.current = myDisplayName;
+  const myLanguageRef = useRef(myLanguage);
+  myLanguageRef.current = myLanguage;
   // 비밀번호는 평문으로 DB에 저장되므로(짧은 숫자라 해시의 실익이 낮음) 사이드바를 열 때
   // 매번 API로 다시 조회한다 — 클라이언트 메모리에만 들고 있다가 앱 재시작 시 사라지는 문제를 없앤다.
   const [password, setPassword] = useState<string | null>(null);
@@ -307,13 +319,13 @@ export default function HostLiveSessionScreen() {
       }
 
       const speaker = usersRef.current.find((u) => u.userId === speakerId);
-      const isMine = speakerId === myUserId;
+      const isMine = speakerId === myUserIdRef.current;
       const newBlock: SpeakerMessage = {
         id: `spk-${speakerId}-${Date.now()}`,
         kind: 'speaker',
         speakerId,
-        displayName: speaker?.displayName ?? (isMine ? myDisplayName : t('hostLiveSession.participantFallback')),
-        language: speaker?.language ?? myLanguage,
+        displayName: speaker?.displayName ?? (isMine ? myDisplayNameRef.current : t('hostLiveSession.participantFallback')),
+        language: speaker?.language ?? myLanguageRef.current,
         isMine,
         time: nowTimeLabel(),
         originalText: '',
@@ -603,9 +615,14 @@ function SpeakerBlockView({
           <Text style={styles.englishBoxText} numberOfLines={message.englishExpanded ? undefined : 1}>
             {message.originalText}
           </Text>
-          <Text style={styles.englishBoxToggle}>
-            {message.englishExpanded ? t('hostLiveSession.collapse') : t('hostLiveSession.expand')}
-          </Text>
+          <View style={styles.englishBoxToggleRow}>
+            <Text style={styles.englishBoxToggle}>
+              {message.englishExpanded ? t('hostLiveSession.collapse') : t('hostLiveSession.expand')}
+            </Text>
+            {/* Figma 297:22594 — open(▾)/fold(▴) 폴리곤. 펼침 상태에 따라 180도 회전시켜
+                하나의 화살표로 두 상태를 표현한다. */}
+            <Text style={[styles.englishBoxChevron, message.englishExpanded && styles.englishBoxChevronExpanded]}>▾</Text>
+          </View>
         </Pressable>
       )}
     </View>
@@ -818,11 +835,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#9A9A9A',
   },
+  englishBoxToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 4,
+    marginTop: 4,
+  },
+  englishBoxChevron: {
+    fontSize: 10,
+    color: '#9A9A9A',
+    transform: [{ rotate: '0deg' }],
+  },
+  englishBoxChevronExpanded: {
+    transform: [{ rotate: '180deg' }],
+  },
   englishBoxToggle: {
     fontSize: 12,
     color: '#9A9A9A',
     textAlign: 'right',
-    marginTop: 4,
   },
   // Figma 84:420/186:2887 — glow/막대를 bottomBar 상단 아웃라인보다 1px 위에 딱 붙여 배치.
   speakListenBarWrap: {
