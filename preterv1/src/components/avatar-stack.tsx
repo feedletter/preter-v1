@@ -54,6 +54,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#E8EBFF',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
   stack: {
     width: 32,
