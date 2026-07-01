@@ -6,6 +6,7 @@ import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-c
 
 import '@/lib/i18n';
 import { installGlobalErrorHandlers, logScreenView, requestFcmToken } from '@/lib/firebase';
+import { applyPendingUpdateOnStartup } from '@/lib/updates';
 
 installGlobalErrorHandlers();
 
@@ -20,6 +21,12 @@ function ScreenViewTracker() {
 }
 
 export default function RootLayout() {
+  // 콜드 스타트 시 OTA를 즉시 확인·적용한다(발행 후 두 번 껐다 켜야 하던 문제 해소).
+  // 미팅 진입 전 시점이라 reloadAsync로 인한 재시작이 라이브 세션을 끊지 않는다.
+  useEffect(() => {
+    applyPendingUpdateOnStartup();
+  }, []);
+
   useEffect(() => {
     requestFcmToken().then((token) => {
       if (token) console.log('[FCM] token', token);
