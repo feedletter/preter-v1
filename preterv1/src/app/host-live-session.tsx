@@ -11,7 +11,7 @@ import { AvatarStack } from '@/components/avatar-stack';
 import { LiveAudioBridge, LiveAudioBridgeHandle } from '@/components/live-audio-bridge';
 import { ParticipantsSidebar } from '@/components/participants-sidebar';
 import { PressableScale } from '@/components/pressable-scale';
-import { ORB_RADIUS, SpeakListenOrb } from '@/components/speak-listen-orb';
+import { SpeakListenOrb } from '@/components/speak-listen-orb';
 import { Brand, Spacing } from '@/constants/theme';
 import { logCrashBreadcrumb, logEvent } from '@/lib/firebase';
 import { LiveSessionEvent, RoomUser } from '@/lib/live-session';
@@ -38,8 +38,15 @@ type TimelineMessage = SystemMessage | SpeakerMessage;
 
 const LANGUAGE_FLAGS: Record<string, string> = { ko: '🇰🇷', en: '🇺🇸', ja: '🇯🇵', zh: '🇨🇳' };
 
+// 같은 화자의 자막 델타가 이 시간 이상 끊기면 발화가 끝난 것으로 보고 블록을 확정한다.
+// 상시 세션 모델에서 서버 TURN_COMPLETE가 발화마다 확실히 도착하지 않아, 같은 화자의 다음
+// 발화가 이전 블록에 이어붙는 문제를 이 무음 타임아웃으로 보강한다(다음 델타는 새 블록 생성).
+const SPEAKER_INACTIVITY_MS = 1500;
+
 // Figma 392:26316 — bottom bar 전체 높이(흰 배경 영역).
-const BOTTOM_BAR_HEIGHT = 82;
+// 버튼이 위치하는 콘텐츠 영역 높이. 실제 View height는 이 값 + insets.bottom으로
+// 동적으로 설정해서 safe area padding이 콘텐츠 영역을 잠식하지 않도록 한다.
+const BOTTOM_BAR_HEIGHT = 96;
 
 const PLAY_ICON = require('@/assets/images/live-session/play-icon.png');
 const STOP_ICON = require('@/assets/images/live-session/stop-icon.png');
@@ -96,7 +103,7 @@ export default function HostLiveSessionScreen() {
 
   const [hasStarted, setHasStarted] = useState(arrivedAlreadyStarted);
   const [muted, setMuted] = useState(true);
-  const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
+  const [activeSpeakerIds, setActiveSpeakerIds] = useState<string[]>([]);
   const [users, setUsers] = useState<RoomUser[]>([]);
   const [messages, setMessages] = useState<TimelineMessage[]>([]);
   // 호스트/참가자가 각자 화면에 진입/시작한 시각부터 따로 카운트하면 헤더 시계가 서로
@@ -117,31 +124,42 @@ export default function HostLiveSessionScreen() {
   const bridgeRef = useRef<LiveAudioBridgeHandle | null>(null);
   const usersRef = useRef<RoomUser[]>([]);
   const openSpeakerIdRef = useRef<Map<string, string>>(new Map());
+  // 화자별 무음 타임아웃 타이머(speakerId → timer). 델타가 올 때마다 리셋되고, 만료되면
+  // 그 화자의 열린 블록을 확정한다(SPEAKER_INACTIVITY_MS 참조).
+  const speakerFinalizeTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const scrollRef = useRef<ScrollView>(null);
   const autoStartedRef = useRef(false);
 
-  // 내 마이크가 음소거 상태여도 다른 사람이 말하고 있으면(activeSpeakerId가 남) 그 통역
-  // 오디오는 계속 들리므로 듣는 중(listening)으로 표시해야 한다 — 음소거가 무조건 우선하면
-  // 안 된다. 다만 activeSpeakerId가 "나"로 남아있는 상태에서 방금 음소거를 누른 경우는
-  // (서버가 무음 타임아웃으로 턴을 정리하기까지 수 초의 지연이 있다 — silence watchdog)
-  // 즉시 muted로 보여줘야 한다. 그래서 "남이 말하는 중"인지를 먼저 확인하고, 아니면
-  // 내 음소거 여부를 우선한다.
-  const otherIsSpeaking = activeSpeakerId !== null && activeSpeakerId !== myUserId;
+  // 동시 발화 지원: 현재 말하는 화자가 여럿일 수 있어 집합(activeSpeakerIds)으로 받는다.
+  // 내 마이크가 음소거여도 다른 사람이 말하고 있으면 그 통역 오디오가 계속 들리므로
+  // listening으로 표시한다 — 음소거가 무조건 우선하면 안 된다. 내가 말하는 중인지는
+  // 집합에 내 id가 있는지로 판단한다.
+  const otherIsSpeaking = activeSpeakerIds.some((id) => id !== myUserId);
+  const meSpeaking = myUserId !== null && activeSpeakerIds.includes(myUserId);
   const audioState: AudioState = !hasStarted
     ? 'muted'
-    : otherIsSpeaking
-      ? 'listening'
-      : muted
-        ? 'muted'
-        : activeSpeakerId === myUserId
-          ? 'speaking'
-          : 'listening';
+    : muted
+      ? otherIsSpeaking
+        ? 'listening'
+        : 'muted'
+      : meSpeaking
+        ? 'speaking'
+        : 'listening';
 
   // ---- 초기화: 내 프로필 + WebSocket 연결 -------------------------------
 
   useEffect(() => {
     logCrashBreadcrumb(`host-live-session: mount roomId=${roomId} arrivedAlreadyStarted=${arrivedAlreadyStarted}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 언마운트 시 남아있는 화자별 무음 타임아웃 타이머를 모두 정리한다.
+  useEffect(() => {
+    const timers = speakerFinalizeTimersRef.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
   }, []);
 
   useEffect(() => {
@@ -228,7 +246,7 @@ export default function HostLiveSessionScreen() {
 
           usersRef.current = event.users;
           setUsers(event.users);
-          setActiveSpeakerId(event.activeSpeakerId);
+          setActiveSpeakerIds(event.activeSpeakerIds ?? []);
           if (event.startedAt) setRoomStartedAt(event.startedAt);
           break;
         }
@@ -249,10 +267,6 @@ export default function HostLiveSessionScreen() {
         }
         case 'TURN_COMPLETE': {
           finalizeSpeakerBlock(event.speakerId);
-          break;
-        }
-        case 'FLOOR_OCCUPIED': {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           break;
         }
         case 'ROOM_ENDED': {
@@ -296,19 +310,20 @@ export default function HostLiveSessionScreen() {
   }
 
   function upsertSpeakerBlock(speakerId: string, mutate: (block: SpeakerMessage) => void) {
-    setMessages((prev) => {
-      // Floor control상 동시에 열려 있는 발화 턴은 1개뿐이어야 한다. TURN_COMPLETE 누락 등
-      // 어떤 이유로든 다른 화자 명의의 블록이 안 닫힌 채 남아 있으면, 화자A→화자B→화자A
-      // 순서로 말했을 때 화자A의 두 번째 발화 텍스트가 직전(화자B 등)의 오래된 블록에
-      // 잘못 이어붙는 버그가 있었다 — 새 이벤트가 들어오면 다른 화자 명의로 열려 있는
-      // 블록을 먼저 강제로 마감해서, 항상 "현재 화자" 단 하나만 open 상태이게 보장한다.
-      let next = prev;
-      for (const [openSpeakerId, openId] of [...openSpeakerIdRef.current]) {
-        if (openSpeakerId === speakerId) continue;
-        openSpeakerIdRef.current.delete(openSpeakerId);
-        next = next.map((m) => (m.id === openId && m.kind === 'speaker' ? { ...m, isFinal: true } : m));
-      }
+    // 델타가 도착할 때마다 이 화자의 무음 타임아웃을 리셋한다 — 발화가 이어지는 동안엔
+    // 블록이 유지되고, 델타가 끊기면(발화 종료) 타이머가 블록을 확정해 다음 발화가 새
+    // 블록으로 시작되게 한다.
+    const timers = speakerFinalizeTimersRef.current;
+    const pending = timers.get(speakerId);
+    if (pending) clearTimeout(pending);
+    timers.set(speakerId, setTimeout(() => finalizeSpeakerBlock(speakerId), SPEAKER_INACTIVITY_MS));
 
+    setMessages((prev) => {
+      // 동시 발화 지원: 화자마다 자기 블록을 따로 연다(openSpeakerIdRef는 speakerId →
+      // 열린 블록 id 맵). 과거 floor control 시절엔 "현재 화자 1명만 open"을 강제로
+      // 보장했지만, 이제 여러 화자가 동시에 말할 수 있으므로 각자의 블록을 독립적으로
+      // 누적한다. 각 화자 블록은 그 화자의 TURN_COMPLETE에서만 마감된다.
+      const next = prev;
       const openId = openSpeakerIdRef.current.get(speakerId);
       const existingIndex = openId ? next.findIndex((m) => m.id === openId) : -1;
 
@@ -343,6 +358,11 @@ export default function HostLiveSessionScreen() {
   }
 
   function finalizeSpeakerBlock(speakerId: string) {
+    const timer = speakerFinalizeTimersRef.current.get(speakerId);
+    if (timer) {
+      clearTimeout(timer);
+      speakerFinalizeTimersRef.current.delete(speakerId);
+    }
     const openId = openSpeakerIdRef.current.get(speakerId);
     if (!openId) return;
     openSpeakerIdRef.current.delete(speakerId);
@@ -525,11 +545,11 @@ export default function HostLiveSessionScreen() {
         )}
       </ScrollView>
 
-      <View style={styles.speakListenOrbWrap} pointerEvents="none">
+      <View style={[styles.speakListenOrbWrap, { bottom: insets.bottom + BOTTOM_BAR_HEIGHT - 1 }]} pointerEvents="none">
         <SpeakListenOrb state={audioState === 'muted' ? 'idle' : audioState} />
       </View>
 
-      <View style={[styles.bottomBar, { paddingBottom: insets.bottom }]}>
+      <View style={[styles.bottomBar, { height: BOTTOM_BAR_HEIGHT + insets.bottom, paddingBottom: insets.bottom }]}>
         <PressableScale onPress={handlePlayButtonPress} style={styles.roundButton}>
           <Image source={hasStarted ? STOP_ICON : PLAY_ICON} style={styles.playButtonIcon} resizeMode="contain" />
         </PressableScale>
@@ -616,7 +636,12 @@ function SpeakerBlockView({
           {message.isMine ? t('hostLiveSession.meIndicator') : ''} · {message.time}
         </Text>
       </View>
-      <Text style={[styles.speakerText, message.isMine && styles.speakerTextMine]}>{primaryText}</Text>
+      {/* 자막은 서버가 델타(조각)로 스트리밍하므로 텍스트가 이어붙으며 자연히 타이핑처럼
+          보인다. 과거 TypeWriter는 children이 바뀔 때마다 애니메이션을 인덱스 0부터 재시작해서,
+          델타가 올 때마다 블록 전체가 처음부터 다시 타이핑되는 버그가 있었다 — 정적 Text로 렌더한다. */}
+      <Text style={[styles.speakerText, message.isMine && styles.speakerTextMine]}>
+        {primaryText ?? ''}
+      </Text>
 
       {showTranslation && (
         <Pressable style={styles.englishBox} onPress={onToggleEnglish}>
@@ -794,25 +819,24 @@ const styles = StyleSheet.create({
     color: '#9A9A9A',
     textAlign: 'right',
   },
-  // 오브의 가로 중심을 bottomBar 상단 경계선에 맞춘다 — 오브 높이의 절반(ORB_RADIUS)만큼만
-  // bottomBar 위로 올라오게 배치해서, 아래쪽 절반은 bottomBar의 불투명 배경(흰색)에
-  // 자연스럽게 가려지고 위쪽 절반만 보인다. JSX 순서상 bottomBar보다 먼저 그려지므로
-  // zIndex 없이도 같은 부모의 형제 paint 순서만으로 bottomBar가 위에 덮인다.
+  // voice-bar는 bottomBar 상단에 1px 걸치게 배치하고, bottomBar(zIndex:1)가 하단부를 덮는다.
   speakListenOrbWrap: {
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: BOTTOM_BAR_HEIGHT - ORB_RADIUS,
+    bottom: BOTTOM_BAR_HEIGHT - 1,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
+    zIndex: 0,
   },
   bottomBar: {
-    height: BOTTOM_BAR_HEIGHT,
+    // height는 JSX에서 BOTTOM_BAR_HEIGHT + insets.bottom으로 동적 설정
     backgroundColor: 'white',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
+    zIndex: 1,
   },
   roundButton: {
     width: 44,

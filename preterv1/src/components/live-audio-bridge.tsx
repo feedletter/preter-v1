@@ -23,6 +23,28 @@ const TARGET_SR: number = 16000; // Gemini Live 입력 규격
 const PLAYBACK_SR = 24000;
 const MAX_RECONNECT_DELAY_MS = 10000;
 
+// 클라이언트 RMS(음량) 게이팅 임계값. 같은 좁은 공간에서 여러 명이 블루투스 이어폰을
+// 끼고 말할 때, 옆 사람 목소리가 내 마이크에 물리적으로 새어 들어와(누출) 내 발화
+// 세션이 옆 사람 말을 "내가 말한 것"으로 처리해버리는 문제가 있다. 누출된 주변 음성은
+// 실제 발화자 본인 목소리보다 에너지가 훨씬 낮으므로, RMS가 이 값 이하인 청크는 서버로
+// 보내지 않아 대부분 걸러낸다(iOS voiceChat 모드의 하드웨어 AEC와 2중 방어). 너무 높이면
+// 작게 말하는 사람의 첫 음절이 잘리므로 보수적으로 잡고, 필요 시 튜닝한다.
+const MIC_RMS_GATE = 0.012;
+
+// 발화 종료 시 음량이 서서히 감쇠하는데(말끝), 그 구간이 MIC_RMS_GATE 아래로 떨어지면
+// 마지막 단어의 오디오가 서버로 안 가 Gemini가 그 단어를 통역/전사하지 못한다("말끝
+// 단어 누락" 버그). 한번 발화가 감지되면 이후 몇 청크는 게이트 아래여도 계속 통과시켜
+// 말끝을 살린다(hangover). AudioRecorder bufferLength=2048 / TARGET_SR=16000 ≈ 128ms라
+// 8청크 ≈ 1초 — 일반적인 말끝 감쇠 구간을 덮는다.
+const VOICE_HANGOVER_CHUNKS = 8;
+
+function computeRms(float32: Float32Array): number {
+  if (float32.length === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < float32.length; i++) sum += float32[i] * float32[i];
+  return Math.sqrt(sum / float32.length);
+}
+
 // 엔진(이제 네이티브 오디오 모듈)이 RN으로 올려보내는 오디오/소켓 생명주기 신호.
 export type EngineStatus =
   | 'ready'
@@ -92,8 +114,15 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const audioContextRef = useRef<AudioContext | null>(null);
-    const queueRef = useRef<AudioBufferQueueSourceNode | null>(null);
+    // 동시 발화 지원: 화자(speakerId)별로 별도의 재생 큐를 둔다. 단일 큐에 여러 화자의
+    // 버퍼를 섞으면 큐 노드가 순차 재생만 해서 동시 발화가 겹쳐 들리지 않고 줄줄이
+    // 이어붙는다 — 화자별 큐를 따로 destination에 연결해야 실제 대화처럼 겹쳐 재생된다.
+    const queuesRef = useRef<Map<string, AudioBufferQueueSourceNode>>(new Map());
     const recorderRef = useRef<AudioRecorder | null>(null);
+
+    // RMS 게이팅 hangover 카운터: 발화가 감지된 뒤 말끝 감쇠 구간을 살리기 위해 남은
+    // "게이트 아래여도 통과시킬" 청크 수. 발화 감지 시 VOICE_HANGOVER_CHUNKS로 리셋된다.
+    const voiceHangoverRef = useRef(0);
 
     const onEventRef = useRef(onEvent);
     onEventRef.current = onEvent;
@@ -118,44 +147,54 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
       }, delay);
     }
 
-    function playBypassPCM(arrayBuffer: ArrayBuffer) {
+    // 화자별 재생 큐를 lazy하게 만든다 — 처음 그 화자의 오디오가 도착할 때 생성해
+    // destination에 연결한다. context가 아직 준비 안 됐으면 null.
+    function getQueueForSpeaker(speakerId: string): AudioBufferQueueSourceNode | null {
       const context = audioContextRef.current;
-      const queue = queueRef.current;
+      if (!context) return null;
+      let queue = queuesRef.current.get(speakerId);
+      if (!queue) {
+        queue = context.createBufferQueueSource();
+        queue.connect(context.destination);
+        // start()의 offset 기본값(-1) 라이브러리 버그 회피 — 명시적으로 0을 넘긴다.
+        queue.start(0, 0);
+        queuesRef.current.set(speakerId, queue);
+      }
+      return queue;
+    }
+
+    // 통역 오디오(AUDIO_TRANSLATED, 24kHz)와 bypass 원본(AUDIO_BYPASS, 16kHz)은 둘 다
+    // raw PCM(16-bit little-endian mono)이라 동일 경로로 동기 변환해 즉시 큐에 넣는다.
+    // 과거 통역 오디오는 context.decodePCMInBase64(비동기)로 디코딩 후 .then()에서 enqueue
+    // 했는데, 청크마다 Promise resolve 타이밍이 들쭉날쭉하고 순서 보장도 안 돼서 재생 큐가
+    // 청크 사이에서 순간적으로 비면서(underrun) 단어 단위로 끊겨 들리는(chopping) 문제가
+    // 있었다. 도착 즉시 순서대로 동기 enqueue하면 큐가 마르지 않아 매끄럽게 이어진다.
+    function enqueuePcmBase64(speakerId: string, base64: string, sourceSR: number) {
+      const context = audioContextRef.current;
+      const queue = getQueueForSpeaker(speakerId);
       if (!context || !queue) return;
-      const int16 = new Int16Array(arrayBuffer);
-      if (int16.length === 0) return;
+      const binary = globalThis.atob(base64);
+      const byteLen = binary.length;
+      if (byteLen < 2) return;
+      const int16 = new Int16Array(byteLen >> 1);
+      for (let i = 0; i < int16.length; i++) {
+        int16[i] = (binary.charCodeAt(i * 2) | (binary.charCodeAt(i * 2 + 1) << 8)) << 16 >> 16;
+      }
       let float32: Float32Array = new Float32Array(int16.length);
       for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
-      // bypass 원본은 16kHz로 들어오는데 재생 context는 PLAYBACK_SR(24kHz) 고정이라
-      // 그대로 createBuffer에 16000을 선언해버리면 큐 안에서 통역 오디오(24kHz 선언)와
-      // 섞일 때 노드가 buffer.sampleRate를 무시하고 context rate로만 재생해 1.5배 빠르게
-      // 들린다 — 미리 PLAYBACK_SR로 리샘플링해서 버퍼에 선언하는 rate와 실제 재생 rate를
-      // 항상 일치시킨다.
-      if (TARGET_SR !== PLAYBACK_SR) float32 = resample(float32, TARGET_SR, PLAYBACK_SR);
+      // 재생 context는 PLAYBACK_SR(24kHz) 고정이라, 소스가 그와 다르면(bypass 16kHz) 미리
+      // 리샘플링해 버퍼 선언 rate와 실제 재생 rate를 일치시킨다(섞일 때 노드가 buffer.sampleRate를
+      // 무시하고 context rate로만 재생하는 문제 회피). 통역 오디오는 이미 24kHz라 통과.
+      if (sourceSR !== PLAYBACK_SR) float32 = resample(float32, sourceSR, PLAYBACK_SR);
       if (float32.length === 0) return;
       const buffer = context.createBuffer(1, float32.length, PLAYBACK_SR);
       buffer.copyToChannel(float32, 0);
       queue.enqueueBuffer(buffer);
     }
 
-    function playTranslatedBase64(base64: string) {
-      const context = audioContextRef.current;
-      const queue = queueRef.current;
-      if (!context || !queue) return;
-      context
-        .decodePCMInBase64(base64, PLAYBACK_SR, 1, false)
-        .then((buffer) => queue.enqueueBuffer(buffer))
-        .catch(() => {
-          // 디코딩 실패한 통역 오디오 조각 1개는 그냥 버린다 — 세션 전체를 끊을 정도는 아님.
-        });
-    }
-
     function handleSocketMessage(data: unknown) {
-      if (data instanceof ArrayBuffer) {
-        // 같은 언어 bypass 원본 PCM (16kHz).
-        playBypassPCM(data);
-        return;
-      }
+      // 모든 오디오가 이제 JSON(base64)으로 화자 식별자와 함께 오므로, 바이너리 프레임은
+      // 더 이상 사용하지 않는다(과거 bypass 원본 PCM 경로는 AUDIO_BYPASS로 대체됨).
       if (typeof data !== 'string') return;
       let msg: LiveSessionEvent & Record<string, unknown>;
       try {
@@ -164,9 +203,12 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
         return;
       }
       if (msg.type === 'AUDIO_TRANSLATED' && typeof msg.data === 'string') {
-        playTranslatedBase64(msg.data); // 통역 오디오 24kHz
+        enqueuePcmBase64(msg.speakerId as string, msg.data, PLAYBACK_SR); // 통역 오디오 24kHz
+      } else if (msg.type === 'AUDIO_BYPASS' && typeof msg.data === 'string') {
+        enqueuePcmBase64(msg.speakerId as string, msg.data, TARGET_SR); // 동일 언어 원본 16kHz
       } else if (msg.type === 'INTERRUPTED') {
-        queueRef.current?.clearBuffers();
+        // 해당 화자 큐만 비운다 — 다른 화자의 동시 발화 재생은 끊지 않는다.
+        queuesRef.current.get(msg.speakerId as string)?.clearBuffers();
       }
       // 모든 JSON 이벤트(자막/상태/종료 등)는 RN 네이티브 UI로 그대로 전달.
       onEventRef.current(msg as LiveSessionEvent);
@@ -248,8 +290,8 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
     useEffect(() => {
       let cancelled = false;
       let context: AudioContext | null = null;
-      let queue: AudioBufferQueueSourceNode | null = null;
       let recorder: AudioRecorder | null = null;
+      const queues = queuesRef.current;
 
       async function setup() {
         logCrashBreadcrumb(`live-audio-bridge: mount roomId=${roomId}`);
@@ -271,6 +313,11 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
         // 확인됨) — 마이크 캡처가 필수인 통역 서비스 특성상 HFP만 켠다.
         AudioManager.setAudioSessionOptions({
           iosCategory: 'playAndRecord',
+          // voiceChat 모드는 iOS의 Voice-Processing I/O(하드웨어 AEC + 노이즈 억제)를
+          // 켠다 — 같은 공간에서 옆 사람 목소리/스피커 누출이 내 마이크로 들어가는 걸
+          // OS 레벨에서 1차로 줄여준다(클라이언트 RMS 게이팅과 2중 방어). 통역 서비스
+          // 특성상 풀듀플렉스 음성 통신이라 이 모드가 정확히 들어맞는다.
+          iosMode: 'voiceChat',
           iosOptions: ['defaultToSpeaker', 'allowBluetoothHFP'],
         });
         logCrashBreadcrumb('live-audio-bridge: setAudioSessionOptions done');
@@ -291,17 +338,8 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
         context = new AudioContext({ sampleRate: PLAYBACK_SR });
         audioContextRef.current = context;
         logCrashBreadcrumb('live-audio-bridge: AudioContext created');
-
-        queue = context.createBufferQueueSource();
-        queue.connect(context.destination);
-        logCrashBreadcrumb('live-audio-bridge: queue connected');
-        // react-native-audio-api의 AudioBufferQueueSourceNode.start()는 offset 기본값이
-        // -1인데 곧바로 "offset < 0이면 RangeError" 검증을 하는 라이브러리 자체 버그가
-        // 있다 — 인자 없이 호출하면 항상 100% 크래시한다(2026-06-27 TestFlight 확정).
-        // 명시적으로 offset=0을 넘겨서 그 기본값을 우회한다.
-        queue.start(0, 0);
-        queueRef.current = queue;
-        logCrashBreadcrumb('live-audio-bridge: queue started');
+        // 재생 큐는 더 이상 단일 노드가 아니라 화자별로 lazy 생성한다(동시 발화 겹침
+        // 재생). 첫 오디오가 도착할 때 getQueueForSpeaker가 만든다.
 
         recorder = new AudioRecorder();
         recorderRef.current = recorder;
@@ -323,6 +361,22 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
             logCrashBreadcrumb(`live-audio-bridge: resample produced empty buffer (sourceSR=${sourceSR})`);
             return;
           }
+          // RMS 게이팅 + hangover: 임계값 이상이면 발화로 보고 hangover를 리셋한다. 임계값
+          // 아래여도 직전에 발화가 있었으면(hangover 잔여) 말끝 감쇠 구간으로 보고 계속
+          // 통과시킨다 — 이게 없으면 문장 끝 음량이 게이트 아래로 떨어지며 마지막 단어가
+          // 잘려 통역/전사에서 누락된다. 발화도 hangover도 없는 순수 무음/누출 청크만 버린다.
+          if (computeRms(resampled) >= MIC_RMS_GATE) {
+            voiceHangoverRef.current = VOICE_HANGOVER_CHUNKS;
+          } else if (voiceHangoverRef.current > 0) {
+            voiceHangoverRef.current -= 1;
+          } else {
+            return;
+          }
+          // 상시 세션 + 동시 발화 모델에서는 통역/바이패스가 재생되는 중에도 마이크를 계속
+          // 송신해야 한다 — 두번째 발화자는 정의상 남의 통역을 들으며 말을 시작하기 때문이다.
+          // 과거 Hold & Flush(재생 중 마이크 버퍼링)는 "한 번에 한 명"인 floor-control 시절
+          // 잔재라, 그 모델에선 두번째 화자의 오디오가 서버로 영영 안 올라가 통역이 안 됐다.
+          // 스피커 누출은 iOS voiceChat AEC + 위 RMS 게이팅으로 막는다(CLAUDE.md 확정).
           ws.send(floatToInt16(resampled));
         });
         recorder.onError((err) => {
@@ -344,12 +398,20 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
         cancelled = true;
         intentionalCloseRef.current = true;
         clearReconnectTimer();
+        voiceHangoverRef.current = 0;
         recorder?.stop();
         recorder?.clearOnAudioReady();
         recorder?.clearOnError();
         wsRef.current?.close();
         wsRef.current = null;
-        queue?.stop();
+        for (const q of queues.values()) {
+          try {
+            q.stop();
+          } catch {
+            // 이미 정리된 큐는 무시.
+          }
+        }
+        queues.clear();
         context?.close().catch(() => {});
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
