@@ -8,6 +8,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+# sqladmin 커스텀 페이지(예: 일별 AI 비용 대시보드)가 templates_dir="templates"
+# (cwd 기준 상대경로)를 참조한다 — 이걸 빼면 이미지 안에 디렉토리가 없어서
+# 해당 페이지에서만 TemplateNotFound로 500이 난다(실제 운영에서 발생한 버그).
+COPY templates ./templates
 
 # Cloud Run이 PORT 환경변수로 리스닝 포트를 주입한다.
 ENV PORT=8080

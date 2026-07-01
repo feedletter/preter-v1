@@ -5,9 +5,30 @@
 그게 끝이다. 디자인이나 프론트엔드 작업이 필요 없다.
 """
 
-from sqladmin import ModelView
+from sqladmin import BaseView, ModelView, expose
+from sqladmin.filters import AllUniqueStringValuesFilter, BooleanFilter
+from sqlalchemy import text as sql_text
+from starlette.requests import Request
 
-from app.admin.models import BusinessCard, OAuthProvider, User, UserPlan
+from app.admin.db import get_admin_engine
+from app.admin.models import (
+    AiUsageLog,
+    BusinessCard,
+    Document,
+    DocumentContext,
+    DocumentMessage,
+    GuestSession,
+    MeetingParticipant,
+    MeetingRoom,
+    MeetingSummary,
+    OAuthProvider,
+    Project,
+    ProjectDocument,
+    ProjectInstruction,
+    Report,
+    User,
+    UserPlan,
+)
 
 
 class UserAdmin(ModelView, model=User):
@@ -87,3 +108,375 @@ class OAuthProviderAdmin(ModelView, model=OAuthProvider):
     # 토큰 값은 운영자도 화면에서 노출하지 않음 (탈취 위험 — 별도 암호화 작업 전까지는 더더욱)
     column_details_exclude_list = [OAuthProvider.access_token, OAuthProvider.refresh_token]
     can_create = False
+
+
+class ProjectAdmin(ModelView, model=Project):
+    name = "프로젝트"
+    name_plural = "프로젝트"
+    icon = "fa-solid fa-folder"
+    category = "미팅/자료"
+
+    column_list = [
+        Project.name,
+        Project.description,
+        Project.user,
+        Project.created_at,
+        Project.deleted_at,
+    ]
+    # 운영 케이스 4: 프로젝트 상세에서 등록된 미팅/자료/지시사항을 한 화면에서 확인.
+    column_details_list = [
+        Project.id,
+        Project.name,
+        Project.description,
+        Project.user,
+        Project.meeting_rooms,
+        Project.project_documents,
+        Project.instruction,
+        Project.created_at,
+        Project.deleted_at,
+    ]
+    column_searchable_list = [Project.name]
+    column_sortable_list = [Project.created_at]
+    column_default_sort = [(Project.created_at, True)]
+    can_create = True
+
+
+class DocumentAdmin(ModelView, model=Document):
+    name = "미팅 자료"
+    name_plural = "미팅 자료"
+    icon = "fa-solid fa-file"
+    category = "미팅/자료"
+
+    column_list = [
+        Document.title,
+        Document.user,
+        Document.file_url,
+        Document.created_at,
+        Document.deleted_at,
+    ]
+    # 운영 케이스 5: 자료 상세에서 메시지/통역 맥락/연결된 프로젝트·미팅을 한 화면에서 확인.
+    column_details_list = [
+        Document.id,
+        Document.title,
+        Document.user,
+        Document.file_url,
+        Document.messages,
+        Document.contexts,
+        Document.project_documents,
+        Document.meeting_rooms,
+        Document.created_at,
+        Document.deleted_at,
+    ]
+    column_searchable_list = [Document.title]
+    column_sortable_list = [Document.created_at]
+    column_default_sort = [(Document.created_at, True)]
+    can_create = True
+
+
+class DocumentMessageAdmin(ModelView, model=DocumentMessage):
+    name = "자료 메시지"
+    name_plural = "자료 메시지"
+    icon = "fa-solid fa-comment-dots"
+    category = "미팅/자료"
+
+    column_list = [
+        DocumentMessage.document,
+        DocumentMessage.type,
+        DocumentMessage.status,
+        DocumentMessage.file_name,
+        DocumentMessage.created_at,
+    ]
+    column_searchable_list = [DocumentMessage.file_name, DocumentMessage.content]
+    column_sortable_list = [DocumentMessage.created_at]
+    column_default_sort = [(DocumentMessage.created_at, True)]
+    # sqladmin 0.24.0부터 column_filters는 raw 컬럼이 아니라 Filter 인스턴스를 요구한다
+    # (raw 컬럼을 넣으면 list() 내부에서 filter_.parameter_name 접근 시 AttributeError →
+    # 500으로 그대로 죽음 — 실제 운영에서 발생한 버그).
+    column_filters = [
+        AllUniqueStringValuesFilter(DocumentMessage.status),
+        AllUniqueStringValuesFilter(DocumentMessage.type),
+    ]
+    can_create = True
+
+
+class DocumentContextAdmin(ModelView, model=DocumentContext):
+    name = "통역 맥락"
+    name_plural = "통역 맥락"
+    icon = "fa-solid fa-brain"
+    category = "미팅/자료"
+
+    column_list = [
+        DocumentContext.document,
+        DocumentContext.language_hint,
+        DocumentContext.priority,
+        DocumentContext.created_at,
+    ]
+    column_sortable_list = [DocumentContext.created_at]
+    column_default_sort = [(DocumentContext.created_at, True)]
+    column_filters = [
+        AllUniqueStringValuesFilter(DocumentContext.language_hint),
+        AllUniqueStringValuesFilter(DocumentContext.priority),
+    ]
+    can_create = True
+
+
+class ProjectDocumentAdmin(ModelView, model=ProjectDocument):
+    name = "프로젝트 자료 연결"
+    name_plural = "프로젝트 자료 연결"
+    icon = "fa-solid fa-link"
+    category = "미팅/자료"
+
+    column_list = [
+        ProjectDocument.project,
+        ProjectDocument.document,
+        ProjectDocument.applied_at,
+    ]
+    column_sortable_list = [ProjectDocument.applied_at]
+    can_create = True
+
+
+class ProjectInstructionAdmin(ModelView, model=ProjectInstruction):
+    name = "프로젝트 지시사항"
+    name_plural = "프로젝트 지시사항"
+    icon = "fa-solid fa-note-sticky"
+    category = "미팅/자료"
+
+    column_list = [
+        ProjectInstruction.project,
+        ProjectInstruction.content,
+        ProjectInstruction.updated_at,
+    ]
+    column_sortable_list = [ProjectInstruction.updated_at]
+    can_create = True
+
+
+class MeetingRoomAdmin(ModelView, model=MeetingRoom):
+    name = "미팅룸"
+    name_plural = "미팅룸"
+    icon = "fa-solid fa-door-open"
+    category = "게스트 입장"
+
+    column_list = [
+        MeetingRoom.room_code,
+        MeetingRoom.title,
+        MeetingRoom.host,
+        MeetingRoom.project,
+        MeetingRoom.status,
+        MeetingRoom.max_participants,
+        MeetingRoom.scheduled_at,
+        MeetingRoom.ended_at,
+        MeetingRoom.created_at,
+    ]
+    # 운영 케이스 2: 미팅 상세에서 진행상황(상태/일정)·참가 인원·셋팅(프로젝트/자료/언어/정원)을
+    # 한 화면에서 확인. 평문 비밀번호는 여기서도 제외.
+    column_details_list = [
+        MeetingRoom.id,
+        MeetingRoom.room_code,
+        MeetingRoom.title,
+        MeetingRoom.host,
+        MeetingRoom.status,
+        MeetingRoom.primary_language,
+        MeetingRoom.max_participants,
+        MeetingRoom.project,
+        MeetingRoom.document,
+        MeetingRoom.participants,
+        MeetingRoom.scheduled_at,
+        MeetingRoom.started_at,
+        MeetingRoom.ended_at,
+        MeetingRoom.expires_at,
+        MeetingRoom.created_at,
+        MeetingRoom.deleted_at,
+    ]
+    column_searchable_list = [MeetingRoom.room_code, MeetingRoom.title]
+    column_sortable_list = [MeetingRoom.created_at, MeetingRoom.status]
+    column_default_sort = [(MeetingRoom.created_at, True)]
+    column_filters = [
+        AllUniqueStringValuesFilter(MeetingRoom.status),
+        AllUniqueStringValuesFilter(MeetingRoom.primary_language),
+    ]
+    # 평문 비밀번호는 운영자에게도 노출하지 않음 (column_details_list에도 포함 안 시킴)
+    column_list_exclude_list = [MeetingRoom.password]
+    form_excluded_columns = [MeetingRoom.password]
+    can_create = True
+
+
+class MeetingParticipantAdmin(ModelView, model=MeetingParticipant):
+    name = "참가자"
+    name_plural = "미팅 참가자"
+    icon = "fa-solid fa-users"
+    category = "게스트 입장"
+
+    column_list = [
+        MeetingParticipant.display_name,
+        MeetingParticipant.room,
+        MeetingParticipant.role,
+        MeetingParticipant.language,
+        MeetingParticipant.audio_enabled,
+        MeetingParticipant.joined_at,
+        MeetingParticipant.left_at,
+        MeetingParticipant.is_kicked,
+    ]
+    column_sortable_list = [MeetingParticipant.joined_at]
+    column_filters = [
+        AllUniqueStringValuesFilter(MeetingParticipant.role),
+        BooleanFilter(MeetingParticipant.is_kicked),
+    ]
+    can_create = True
+
+
+class GuestSessionAdmin(ModelView, model=GuestSession):
+    name = "게스트 세션"
+    name_plural = "게스트 세션"
+    icon = "fa-solid fa-user-secret"
+    category = "게스트 입장"
+
+    # 운영 케이스 1: 임시 게스트(룸/이메일/언어/접속 정보/요약 발송 여부) 관리.
+    column_list = [
+        GuestSession.display_name,
+        GuestSession.room,
+        GuestSession.email,
+        GuestSession.language,
+        GuestSession.audio_enabled,
+        GuestSession.ip_address,
+        GuestSession.joined_at,
+        GuestSession.expires_at,
+        GuestSession.summary_sent,
+    ]
+    column_sortable_list = [GuestSession.joined_at, GuestSession.expires_at]
+    column_filters = [
+        AllUniqueStringValuesFilter(GuestSession.language),
+        BooleanFilter(GuestSession.summary_sent),
+    ]
+    column_searchable_list = [GuestSession.display_name, GuestSession.email]
+    # JWT 토큰 값은 탈취 위험으로 노출/입력 모두 막음 (생성 시 모델에서 자동 발급).
+    column_details_exclude_list = [GuestSession.session_token]
+    column_list_exclude_list = [GuestSession.session_token]
+    form_excluded_columns = [GuestSession.session_token]
+    can_create = True
+    can_edit = True
+
+
+class MeetingSummaryAdmin(ModelView, model=MeetingSummary):
+    name = "미팅 요약"
+    name_plural = "미팅 요약"
+    icon = "fa-solid fa-file-lines"
+    category = "게스트 입장"
+
+    column_list = [
+        MeetingSummary.room,
+        MeetingSummary.status,
+        MeetingSummary.ai_model,
+        MeetingSummary.processing_sec,
+        MeetingSummary.created_at,
+        MeetingSummary.completed_at,
+    ]
+    column_sortable_list = [MeetingSummary.created_at]
+    column_filters = [AllUniqueStringValuesFilter(MeetingSummary.status)]
+    can_create = True
+
+
+class ReportAdmin(ModelView, model=Report):
+    name = "신고"
+    name_plural = "앱 문제 신고"
+    icon = "fa-solid fa-triangle-exclamation"
+    category = "운영"
+
+    column_list = [
+        Report.user,
+        Report.category,
+        Report.body,
+        Report.app_version,
+        Report.created_at,
+    ]
+    column_sortable_list = [Report.created_at, Report.category]
+    column_default_sort = [(Report.created_at, True)]
+    # 운영 케이스 3: 카테고리로 필터링 + 내용(본문) 검색.
+    column_filters = [AllUniqueStringValuesFilter(Report.category)]
+    column_searchable_list = [Report.body]
+    can_create = True
+    can_edit = True
+
+
+class AiUsageLogAdmin(ModelView, model=AiUsageLog):
+    name = "AI 사용 로그"
+    name_plural = "AI 사용 로그"
+    icon = "fa-solid fa-receipt"
+    category = "운영"
+
+    column_list = [
+        AiUsageLog.created_at,
+        AiUsageLog.provider,
+        AiUsageLog.model,
+        AiUsageLog.input_tokens,
+        AiUsageLog.output_tokens,
+        AiUsageLog.cost_usd,
+        AiUsageLog.context,
+    ]
+    column_sortable_list = [AiUsageLog.created_at, AiUsageLog.cost_usd]
+    column_default_sort = [(AiUsageLog.created_at, True)]
+    column_filters = [
+        AllUniqueStringValuesFilter(AiUsageLog.provider),
+        AllUniqueStringValuesFilter(AiUsageLog.model),
+    ]
+    can_create = False
+    can_edit = False
+
+
+class AiUsageDashboard(BaseView):
+    """일별 AI API 비용 대시보드 — 호출이 발생한 그 자리(예: document_ai.py)에서
+    app/core/ai_usage.py가 ai_usage_logs에 적재한 원장을 날짜/provider/model별로
+    합산해서 보여준다. 별도 프론트엔드 없이 sqladmin 커스텀 페이지(BaseView)로 구현.
+    """
+
+    name = "일별 AI 비용"
+    icon = "fa-solid fa-chart-line"
+    category = "운영"
+
+    @expose("/ai-usage-dashboard", methods=["GET"])
+    async def dashboard(self, request: Request):
+        engine = get_admin_engine()
+        async with engine.connect() as conn:
+            daily_rows = (
+                await conn.execute(
+                    sql_text(
+                        """
+                        select
+                          date_trunc('day', created_at) as day,
+                          provider,
+                          model,
+                          sum(input_tokens) as input_tokens,
+                          sum(output_tokens) as output_tokens,
+                          sum(cost_usd) as cost_usd
+                        from public.ai_usage_logs
+                        group by 1, 2, 3
+                        order by 1 desc, 2, 3
+                        limit 200
+                        """
+                    )
+                )
+            ).mappings().all()
+
+            total_row = (
+                await conn.execute(
+                    sql_text(
+                        """
+                        select
+                          coalesce(sum(cost_usd), 0) as total_cost_usd,
+                          coalesce(sum(input_tokens), 0) as total_input_tokens,
+                          coalesce(sum(output_tokens), 0) as total_output_tokens
+                        from public.ai_usage_logs
+                        where created_at >= now() - interval '30 days'
+                        """
+                    )
+                )
+            ).mappings().one()
+
+        return await self.templates.TemplateResponse(
+            request,
+            "ai_usage_dashboard.html",
+            {
+                "daily_rows": daily_rows,
+                "total_row": total_row,
+                "title": "일별 AI 비용",
+            },
+        )

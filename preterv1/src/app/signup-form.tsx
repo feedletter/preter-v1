@@ -13,6 +13,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LanguageDropdown } from '@/components/language-dropdown';
@@ -24,10 +25,10 @@ import { getSignupDraft, updateSignupDraft } from '@/lib/signup-draft';
 
 const EXTRA_LIFT = Dimensions.get('window').height * 0.15;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-const EMAIL_TAKEN_MESSAGE = '이미 사용 중인 계정입니다';
 
 export default function SignupFormScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const draft = getSignupDraft();
 
   const [language, setLanguage] = useState(draft.primaryLanguage);
@@ -47,7 +48,7 @@ export default function SignupFormScreen() {
   async function handleNext() {
     if (!isValid || checkingEmail) return;
     if (!EMAIL_RE.test(email)) {
-      setEmailError('이메일 형식을 확인해주세요');
+      setEmailError(t('signupForm.emailFormatError'));
       return;
     }
 
@@ -55,14 +56,14 @@ export default function SignupFormScreen() {
     try {
       const available = await checkEmailAvailable(email);
       if (!available) {
-        setEmailError(EMAIL_TAKEN_MESSAGE);
+        setEmailError(t('signupForm.emailTakenError'));
         return;
       }
     } catch (err) {
       if (err instanceof AuthApiError && err.code === 'NETWORK_ERROR') {
-        Alert.alert('네트워크 연결을 확인해주세요');
+        Alert.alert(t('common.networkError'));
       } else {
-        Alert.alert('이메일 확인에 실패했어요. 잠시 후 다시 시도해주세요.');
+        Alert.alert(t('signupForm.emailCheckFailed'));
       }
       return;
     } finally {
@@ -80,7 +81,7 @@ export default function SignupFormScreen() {
         <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backButton}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
-        <Text style={styles.topBarTitle}>회원가입</Text>
+        <Text style={styles.topBarTitle}>{t('signupForm.topBarTitle')}</Text>
       </View>
 
       <SignupProgressBar step={2} total={3} />
@@ -91,40 +92,40 @@ export default function SignupFormScreen() {
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: Spacing.five + EXTRA_LIFT }]}
         keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>회원 정보를 입력해주세요</Text>
-        <Text style={styles.hint}>명함 스캔 정보가 자동 입력되었어요</Text>
+        <Text style={styles.title}>{t('signupForm.title')}</Text>
+        <Text style={styles.hint}>{t('signupForm.hint')}</Text>
 
         <View style={styles.fields}>
           <LanguageDropdown value={language} onChange={setLanguage} />
 
           <TextField
-            label="사용자 이름"
+            label={t('signupForm.nameLabel')}
             required
             value={name}
             onChangeText={setName}
-            placeholder="이름을 입력해주세요"
-            helperText="명함에서 인식된 이름을 확인해주세요"
+            placeholder={t('signupForm.namePlaceholder')}
+            helperText={t('signupForm.nameHelper')}
           />
 
           <TextField
-            label="계정 로그인 이메일"
+            label={t('signupForm.emailLabel')}
             required
             value={email}
             onChangeText={handleEmailChange}
-            placeholder="이메일을 입력해주세요"
+            placeholder={t('signupForm.emailPlaceholder')}
             keyboardType="email-address"
-            helperText={emailError ? undefined : '로그인에 사용할 이메일 주소예요'}
+            helperText={emailError ? undefined : t('signupForm.emailHelper')}
             error={emailError}
           />
 
           <TextField
-            label="로그인 비밀번호"
+            label={t('signupForm.passwordLabel')}
             required
             value={password}
             onChangeText={setPassword}
-            placeholder="비밀번호를 입력해주세요"
+            placeholder={t('signupForm.passwordPlaceholder')}
             secureTextEntry
-            helperText="영문, 숫자, 특수문자를 조합해 8자 이상 입력해주세요"
+            helperText={t('signupForm.passwordHelper')}
           />
         </View>
       </ScrollView>
@@ -138,7 +139,7 @@ export default function SignupFormScreen() {
             <ActivityIndicator color="white" />
           ) : (
             <Text style={[styles.nextButtonLabel, !isValid && styles.nextButtonLabelDisabled]}>
-              다음
+              {t('common.next')}
             </Text>
           )}
         </Pressable>

@@ -2,15 +2,13 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Brand, Spacing } from '@/constants/theme';
 import { AuthApiError, signInWithOAuth } from '@/lib/auth';
+import { logEvent, setAnalyticsUser, setCrashUser } from '@/lib/firebase';
 import { setSnsDraft } from '@/lib/sns-draft';
-
-function showComingSoon(provider: string) {
-  Alert.alert('준비 중', `${provider} 로그인은 아직 지원되지 않습니다.`);
-}
 
 function ContinueButton({
   label,
@@ -33,6 +31,7 @@ function ContinueButton({
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const [snsLoading, setSnsLoading] = useState<'google' | 'apple' | null>(null);
 
   async function handleSnsLogin(provider: 'google' | 'apple') {
@@ -40,7 +39,10 @@ export default function WelcomeScreen() {
     setSnsLoading(provider);
     try {
       const result = await signInWithOAuth(provider);
+      setAnalyticsUser(result.user.id);
+      setCrashUser(result.user.id);
       if (result.user.is_onboarded) {
+        logEvent('login', { method: provider });
         router.replace('/main');
       } else {
         setSnsDraft({
@@ -54,9 +56,9 @@ export default function WelcomeScreen() {
         return;
       }
       if (err instanceof AuthApiError && err.code === 'NETWORK_ERROR') {
-        Alert.alert('네트워크 연결을 확인해주세요');
+        Alert.alert(t('common.networkError'));
       } else {
-        Alert.alert('로그인에 실패했어요. 잠시 후 다시 시도해주세요.');
+        Alert.alert(t('welcome.loginFailed'));
       }
     } finally {
       setSnsLoading(null);
@@ -75,14 +77,14 @@ export default function WelcomeScreen() {
 
       <SafeAreaView edges={['bottom']} style={styles.sheet}>
         <View style={styles.titleGroup}>
-          <Text style={styles.title}>환영합니다</Text>
-          <Text style={styles.subtitle}>프리터 시작하기</Text>
+          <Text style={styles.title}>{t('welcome.title')}</Text>
+          <Text style={styles.subtitle}>{t('welcome.subtitle')}</Text>
         </View>
 
         <View style={styles.buttonGroup}>
-          <ContinueButton label="이메일로 계속" onPress={() => router.push('/login')} />
+          <ContinueButton label={t('welcome.continueWithEmail')} onPress={() => router.push('/login')} />
           <ContinueButton
-            label="Google로 계속"
+            label={t('welcome.continueWithGoogle')}
             icon={
               snsLoading === 'google' ? (
                 <ActivityIndicator color={Brand.textPrimary} />
@@ -95,7 +97,7 @@ export default function WelcomeScreen() {
             onPress={() => handleSnsLogin('google')}
           />
           <ContinueButton
-            label="Apple로 계속"
+            label={t('welcome.continueWithApple')}
             icon={
               snsLoading === 'apple' ? (
                 <ActivityIndicator color={Brand.textPrimary} />
@@ -110,8 +112,8 @@ export default function WelcomeScreen() {
             onPress={() => handleSnsLogin('apple')}
           />
           <ContinueButton
-            label="게스트로 미팅 참여"
-            onPress={() => showComingSoon('게스트 미팅 참여')}
+            label={t('welcome.continueAsGuest')}
+            onPress={() => router.push('/guest-meeting-input')}
           />
         </View>
       </SafeAreaView>

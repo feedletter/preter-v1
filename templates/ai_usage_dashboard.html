@@ -1,0 +1,66 @@
+{% extends "sqladmin/layout.html" %}
+
+{% block content %}
+<div class="col-12">
+  <div class="row row-cards mb-3">
+    <div class="col-sm-4">
+      <div class="card">
+        <div class="card-body">
+          <div class="subheader">최근 30일 총 비용</div>
+          <div class="h1 mt-1">${{ "%.2f"|format(total_row.total_cost_usd) }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-4">
+      <div class="card">
+        <div class="card-body">
+          <div class="subheader">최근 30일 input 토큰</div>
+          <div class="h1 mt-1">{{ "{:,}".format(total_row.total_input_tokens) }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-4">
+      <div class="card">
+        <div class="card-body">
+          <div class="subheader">최근 30일 output 토큰</div>
+          <div class="h1 mt-1">{{ "{:,}".format(total_row.total_output_tokens) }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">날짜 / Provider / Model별 비용 (최근 200건)</h3>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-vcenter card-table">
+        <thead>
+          <tr>
+            <th>날짜</th>
+            <th>Provider</th>
+            <th>Model</th>
+            <th>Input 토큰</th>
+            <th>Output 토큰</th>
+            <th>비용(USD)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in daily_rows %}
+          <tr>
+            <td>{{ row.day.strftime("%Y-%m-%d") }}</td>
+            <td>{{ row.provider }}</td>
+            <td>{{ row.model }}</td>
+            <td>{{ "{:,}".format(row.input_tokens) }}</td>
+            <td>{{ "{:,}".format(row.output_tokens) }}</td>
+            <td>${{ "%.4f"|format(row.cost_usd) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-muted">아직 기록된 사용량이 없습니다.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

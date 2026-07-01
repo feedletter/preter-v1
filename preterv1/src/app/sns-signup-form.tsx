@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LanguageDropdown } from '@/components/language-dropdown';
@@ -9,10 +10,12 @@ import { SignupProgressBar } from '@/components/signup-progress-bar';
 import { TextField } from '@/components/text-field';
 import { Brand, Spacing } from '@/constants/theme';
 import { AuthApiError, completeSnsSignup } from '@/lib/auth';
+import { logEvent } from '@/lib/firebase';
 import { getSnsDraft, resetSnsDraft } from '@/lib/sns-draft';
 
 export default function SnsSignupFormScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
   const draft = getSnsDraft();
 
   const [language, setLanguage] = useState(draft.primaryLanguage);
@@ -26,13 +29,14 @@ export default function SnsSignupFormScreen() {
     setLoading(true);
     try {
       await completeSnsSignup(language, name);
+      logEvent('sign_up', { method: 'sns' });
       resetSnsDraft();
       router.replace('/main');
     } catch (err) {
       if (err instanceof AuthApiError && err.code === 'NETWORK_ERROR') {
-        Alert.alert('네트워크 연결을 확인해주세요');
+        Alert.alert(t('common.networkError'));
       } else {
-        Alert.alert('회원가입에 실패했어요. 잠시 후 다시 시도해주세요.');
+        Alert.alert(t('snsSignupForm.signupFailed'));
       }
     } finally {
       setLoading(false);
@@ -46,34 +50,34 @@ export default function SnsSignupFormScreen() {
         <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backButton}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
-        <Text style={styles.topBarTitle}>회원 정보</Text>
+        <Text style={styles.topBarTitle}>{t('snsSignupForm.topBarTitle')}</Text>
       </View>
 
       <SignupProgressBar step={2} total={2} />
 
       <View style={styles.content}>
-        <Text style={styles.title}>회원 정보를 입력해주세요</Text>
-        <Text style={styles.hint}>SNS 정보가 자동 입력되었어요</Text>
+        <Text style={styles.title}>{t('snsSignupForm.title')}</Text>
+        <Text style={styles.hint}>{t('snsSignupForm.hint')}</Text>
 
         <View style={styles.fields}>
           <LanguageDropdown value={language} onChange={setLanguage} />
 
           <TextField
-            label="사용자 이름"
+            label={t('snsSignupForm.nameLabel')}
             required
             value={name}
             onChangeText={setName}
-            placeholder="이름을 입력해주세요"
-            helperText="명함에서 인식된 이름을 확인해주세요"
+            placeholder={t('snsSignupForm.namePlaceholder')}
+            helperText={t('snsSignupForm.nameHelper')}
           />
 
           <TextField
-            label="계정 로그인 이메일"
+            label={t('snsSignupForm.emailLabel')}
             required
             value={draft.email}
             onChangeText={() => {}}
             editable={false}
-            helperText="SNS 계정에 연결된 이메일이에요"
+            helperText={t('snsSignupForm.emailHelper')}
           />
         </View>
       </View>
@@ -86,7 +90,7 @@ export default function SnsSignupFormScreen() {
           {loading ? (
             <ActivityIndicator color="white" />
           ) : (
-            <Text style={styles.completeButtonLabel}>회원가입 완료</Text>
+            <Text style={styles.completeButtonLabel}>{t('snsSignupForm.completeButton')}</Text>
           )}
         </Pressable>
       </View>

@@ -2,6 +2,8 @@ import * as Linking from 'expo-linking';
 import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 
+import { resolveDeviceLanguage } from '@/lib/i18n';
+
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
 
@@ -63,6 +65,7 @@ export async function login(email: string, password: string): Promise<TokenRespo
 
 export type SignupPayload = {
   primary_language: string;
+  app_language?: string;
   name: string;
   email: string;
   password: string;
@@ -94,6 +97,50 @@ async function storeTokens(tokens: Pick<TokenResponse, 'access_token' | 'refresh
   // PRD 3.1.3: 토큰 저장 SecureStore (Expo) — access_token, refresh_token
   await SecureStore.setItemAsync('access_token', tokens.access_token);
   await SecureStore.setItemAsync('refresh_token', tokens.refresh_token);
+}
+
+// 앱 재실행 시 SecureStore에 저장된 토큰으로 로그인 상태를 복원한다.
+// access_token이 만료됐으면 refresh_token으로 한 번 갱신을 시도한다.
+export async function restoreSession(): Promise<boolean> {
+  const accessToken = await SecureStore.getItemAsync('access_token');
+  if (!accessToken) return false;
+
+  try {
+    await getMe(accessToken);
+    return true;
+  } catch {
+    // access_token 만료 — refresh_token으로 재발급 시도.
+  }
+
+  const refreshToken = await SecureStore.getItemAsync('refresh_token');
+  if (!refreshToken) return false;
+
+  try {
+    const result = await post<TokenResponse>('/api/v1/auth/refresh', { refresh_token: refreshToken });
+    await storeTokens(result);
+    return true;
+  } catch {
+    await SecureStore.deleteItemAsync('access_token');
+    await SecureStore.deleteItemAsync('refresh_token');
+    return false;
+  }
+}
+
+export async function logout(): Promise<void> {
+  // Profile PRD 9.2: 서버 RT 폐기 시도 후, 실패하더라도 로컬 토큰은 항상 지운다.
+  const accessToken = await SecureStore.getItemAsync('access_token');
+  if (accessToken) {
+    try {
+      await fetch(`${API_URL}/api/v1/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+    } catch {
+      // 네트워크 오류여도 로컬 로그아웃은 계속 진행한다.
+    }
+  }
+  await SecureStore.deleteItemAsync('access_token');
+  await SecureStore.deleteItemAsync('refresh_token');
 }
 
 function parseTokensFromRedirect(
@@ -166,7 +213,11 @@ export async function completeSnsSignup(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({ primary_language: primaryLanguage, name }),
+      body: JSON.stringify({
+        primary_language: primaryLanguage,
+        name,
+        app_language: resolveDeviceLanguage(),
+      }),
     });
   } catch {
     throw new AuthApiError('NETWORK_ERROR');

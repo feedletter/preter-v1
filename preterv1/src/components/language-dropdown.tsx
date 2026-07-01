@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { Brand } from '@/constants/theme';
 
@@ -17,18 +18,19 @@ export function LanguageDropdown({
   value: string;
   onChange: (code: string) => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const selected = LANGUAGES.find((lang) => lang.code === value) ?? LANGUAGES[0];
 
   return (
     <View>
-      <Text style={styles.label}>주 사용 언어 *</Text>
+      <Text style={styles.label}>{t('languageSelect.label')} *</Text>
       <Pressable style={styles.field} onPress={() => setOpen((prev) => !prev)}>
         <Text style={styles.flag}>{selected.flag}</Text>
         <Text style={styles.value}>{selected.label}</Text>
         <Text style={styles.chevron}>{open ? '▾' : '▸'}</Text>
       </Pressable>
-      <Text style={styles.helperText}>통역에 사용할 기본 언어를 선택해주세요</Text>
+      <Text style={styles.helperText}>{t('languageSelect.helper')}</Text>
 
       {open && (
         <View style={styles.options}>

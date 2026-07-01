@@ -8,11 +8,12 @@ auth.users(Supabase Auth 내부 테이블)는 GoTrue가 전적으로 관리하�
 매핑하지 않는다. 운영자가 유저를 봐야 할 땐 public.users를 사용한다.
 """
 
+import secrets
 import uuid
 from datetime import date, datetime
 
 from sqlalchemy import ForeignKey, Numeric
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -115,3 +116,277 @@ class OAuthProvider(Base):
 
     def __str__(self) -> str:
         return f"{self.provider}:{self.provider_uid}"
+
+
+class Project(Base):
+    __tablename__ = "projects"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.users.id"))
+    name: Mapped[str]
+    description: Mapped[str | None]
+    created_at: Mapped[datetime]
+    deleted_at: Mapped[datetime | None]
+
+    user: Mapped["User"] = relationship()
+    # 어드민에서 프로젝트 상세를 볼 때 등록된 미팅/자료/지시사항을 한 번에 확인하기 위한 역참조.
+    meeting_rooms: Mapped[list["MeetingRoom"]] = relationship(back_populates="project")
+    project_documents: Mapped[list["ProjectDocument"]] = relationship(back_populates="project")
+    instruction: Mapped["ProjectInstruction | None"] = relationship(back_populates="project", uselist=False)
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Document(Base):
+    __tablename__ = "documents"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.users.id"))
+    title: Mapped[str]
+    file_url: Mapped[str | None]
+    created_at: Mapped[datetime]
+    deleted_at: Mapped[datetime | None]
+
+    user: Mapped["User"] = relationship()
+    # 어드민에서 자료 상세를 볼 때 메시지/통역 맥락/연결된 프로젝트·미팅을 한 번에 확인하기 위한 역참조.
+    messages: Mapped[list["DocumentMessage"]] = relationship(back_populates="document")
+    contexts: Mapped[list["DocumentContext"]] = relationship(back_populates="document")
+    project_documents: Mapped[list["ProjectDocument"]] = relationship(back_populates="document")
+    meeting_rooms: Mapped[list["MeetingRoom"]] = relationship(back_populates="document")
+
+    def __str__(self) -> str:
+        return self.title
+
+
+class DocumentMessage(Base):
+    __tablename__ = "document_messages"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.documents.id"))
+    type: Mapped[str]
+    content: Mapped[str | None]
+    file_url: Mapped[str | None]
+    file_name: Mapped[str | None]
+    status: Mapped[str]
+    analysis_result: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime]
+
+    document: Mapped["Document"] = relationship(back_populates="messages")
+
+    def __str__(self) -> str:
+        return f"{self.type}:{self.document_id} ({self.status})"
+
+
+class DocumentContext(Base):
+    __tablename__ = "document_contexts"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.documents.id"))
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.document_messages.id")
+    )
+    analysis_points: Mapped[dict] = mapped_column(JSONB)
+    technical_terms: Mapped[dict | None] = mapped_column(JSONB)
+    language_hint: Mapped[str | None]
+    priority: Mapped[str | None]
+    created_at: Mapped[datetime]
+
+    document: Mapped["Document"] = relationship(back_populates="contexts")
+
+    def __str__(self) -> str:
+        return f"context:{self.document_id}"
+
+
+class ProjectDocument(Base):
+    __tablename__ = "project_documents"
+    __table_args__ = {"schema": "public"}
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.projects.id"), primary_key=True
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.documents.id"))
+    applied_at: Mapped[datetime]
+
+    project: Mapped["Project"] = relationship(back_populates="project_documents")
+    document: Mapped["Document"] = relationship(back_populates="project_documents")
+
+    def __str__(self) -> str:
+        return f"{self.project_id} → {self.document_id}"
+
+
+class ProjectInstruction(Base):
+    __tablename__ = "project_instructions"
+    __table_args__ = {"schema": "public"}
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.projects.id"), primary_key=True
+    )
+    content: Mapped[str]
+    updated_at: Mapped[datetime]
+
+    project: Mapped["Project"] = relationship(back_populates="instruction")
+
+    def __str__(self) -> str:
+        return f"지시사항:{self.project_id}"
+
+
+class MeetingRoom(Base):
+    __tablename__ = "meeting_rooms"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    host_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.users.id"))
+    room_code: Mapped[str]
+    title: Mapped[str | None]
+    password: Mapped[str | None]
+    max_participants: Mapped[int]
+    primary_language: Mapped[str]
+    status: Mapped[str]
+    scheduled_at: Mapped[datetime | None]
+    started_at: Mapped[datetime | None]
+    ended_at: Mapped[datetime | None]
+    expires_at: Mapped[datetime]
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.projects.id")
+    )
+    # supabase/migrations/010_create_meeting_draft.sql — Create Meeting 플로우에서
+    # 미팅룸에 연결한 자료(RAG 컨텍스트 주입용). 기존엔 모델에 빠져있어 어드민에 안 보였음.
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.documents.id")
+    )
+    created_at: Mapped[datetime]
+    deleted_at: Mapped[datetime | None]
+
+    host: Mapped["User"] = relationship()
+    participants: Mapped[list["MeetingParticipant"]] = relationship(back_populates="room")
+    project: Mapped["Project | None"] = relationship(back_populates="meeting_rooms")
+    document: Mapped["Document | None"] = relationship(back_populates="meeting_rooms")
+
+    def __str__(self) -> str:
+        return f"{self.room_code} ({self.status})"
+
+
+class MeetingParticipant(Base):
+    __tablename__ = "meeting_participants"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.meeting_rooms.id")
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("public.users.id"))
+    guest_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.guest_sessions.id")
+    )
+    display_name: Mapped[str]
+    role: Mapped[str]
+    language: Mapped[str]
+    audio_enabled: Mapped[bool]
+    joined_at: Mapped[datetime]
+    left_at: Mapped[datetime | None]
+    is_kicked: Mapped[bool]
+
+    room: Mapped["MeetingRoom"] = relationship(back_populates="participants")
+    user: Mapped["User | None"] = relationship()
+    guest_session: Mapped["GuestSession | None"] = relationship()
+
+    def __str__(self) -> str:
+        return f"{self.display_name} ({self.role})"
+
+
+class GuestSession(Base):
+    __tablename__ = "guest_sessions"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    # 어드민 폼에서는 이 필드를 제외하고 CRUD를 허용한다 — 토큰값 노출/직접 입력을 막으면서도
+    # 어드민에서 새 게스트 세션 행을 만들 때 NOT NULL을 만족시키기 위한 기본값.
+    session_token: Mapped[str] = mapped_column(default=lambda: secrets.token_urlsafe(32))
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.meeting_rooms.id")
+    )
+    display_name: Mapped[str]
+    email: Mapped[str | None]
+    language: Mapped[str]
+    audio_enabled: Mapped[bool]
+    device_info: Mapped[dict | None] = mapped_column(JSONB)
+    ip_address: Mapped[str | None]
+    summary_sent: Mapped[bool]
+    joined_at: Mapped[datetime]
+    expires_at: Mapped[datetime]
+    created_at: Mapped[datetime]
+
+    room: Mapped["MeetingRoom"] = relationship()
+
+    def __str__(self) -> str:
+        return self.display_name
+
+
+class MeetingSummary(Base):
+    __tablename__ = "meeting_summaries"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.meeting_rooms.id")
+    )
+    summary_text: Mapped[str | None]
+    action_items: Mapped[list] = mapped_column(JSONB)
+    script_url: Mapped[str | None]
+    status: Mapped[str]
+    ai_model: Mapped[str | None]
+    processing_sec: Mapped[int | None]
+    created_at: Mapped[datetime]
+    completed_at: Mapped[datetime | None]
+    deleted_at: Mapped[datetime | None]
+
+    room: Mapped["MeetingRoom"] = relationship()
+
+    def __str__(self) -> str:
+        return f"summary:{self.room_id} ({self.status})"
+
+
+class Report(Base):
+    __tablename__ = "reports"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("public.users.id"))
+    category: Mapped[str]
+    body: Mapped[str]
+    device_info: Mapped[dict | None] = mapped_column(JSONB)
+    app_version: Mapped[str | None]
+    created_at: Mapped[datetime]
+
+    user: Mapped["User"] = relationship()
+
+    def __str__(self) -> str:
+        return f"{self.category}: {self.body[:30]}"
+
+
+class AiUsageLog(Base):
+    __tablename__ = "ai_usage_logs"
+    __table_args__ = {"schema": "public"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    provider: Mapped[str]
+    model: Mapped[str]
+    input_tokens: Mapped[int]
+    output_tokens: Mapped[int]
+    cost_usd: Mapped[float] = mapped_column(Numeric(12, 6))
+    context: Mapped[str | None]
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.documents.id")
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("public.document_messages.id")
+    )
+    created_at: Mapped[datetime]
+
+    def __str__(self) -> str:
+        return f"{self.provider}:{self.model} ${self.cost_usd}"

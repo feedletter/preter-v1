@@ -7,7 +7,7 @@
 
 from supabase import AuthApiError
 
-from app.core.supabase_client import get_client
+from app.core.supabase_client import get_auth_client
 
 
 class AuthError(Exception):
@@ -18,7 +18,7 @@ class AuthError(Exception):
 
 def sign_up(email: str, password: str, name: str | None = None) -> dict:
     try:
-        res = get_client().auth.sign_up(
+        res = get_auth_client().auth.sign_up(
             {
                 "email": email,
                 "password": password,
@@ -35,7 +35,7 @@ def sign_up(email: str, password: str, name: str | None = None) -> dict:
 
 def sign_in(email: str, password: str) -> dict:
     try:
-        res = get_client().auth.sign_in_with_password({"email": email, "password": password})
+        res = get_auth_client().auth.sign_in_with_password({"email": email, "password": password})
     except AuthApiError as exc:
         raise AuthError("INVALID_CREDENTIALS", str(exc)) from exc
 
@@ -48,7 +48,7 @@ def sign_in_with_id_token(provider: str, id_token: str, nonce: str | None = None
     if nonce:
         payload["nonce"] = nonce
     try:
-        res = get_client().auth.sign_in_with_id_token(payload)
+        res = get_auth_client().auth.sign_in_with_id_token(payload)
     except AuthApiError as exc:
         raise AuthError("SNS_LOGIN_FAILED", str(exc)) from exc
 
@@ -57,7 +57,7 @@ def sign_in_with_id_token(provider: str, id_token: str, nonce: str | None = None
 
 def refresh_session(refresh_token: str) -> dict:
     try:
-        res = get_client().auth.refresh_session(refresh_token)
+        res = get_auth_client().auth.refresh_session(refresh_token)
     except AuthApiError as exc:
         raise AuthError("INVALID_REFRESH_TOKEN", str(exc)) from exc
 
@@ -67,7 +67,7 @@ def refresh_session(refresh_token: str) -> dict:
 def sign_out(access_token: str) -> None:
     """service_role 키로 특정 유저의 토큰을 무효화한다 (admin API 사용)."""
     try:
-        get_client().auth.admin.sign_out(access_token)
+        get_auth_client().auth.admin.sign_out(access_token)
     except AuthApiError as exc:
         raise AuthError("SIGNOUT_FAILED", str(exc)) from exc
 
@@ -75,7 +75,7 @@ def sign_out(access_token: str) -> None:
 def get_user(access_token: str) -> dict:
     """access token을 검증하고 유저 정보를 반환한다 (WebSocket 인증 등에서 사용)."""
     try:
-        res = get_client().auth.get_user(access_token)
+        res = get_auth_client().auth.get_user(access_token)
     except AuthApiError as exc:
         raise AuthError("INVALID_TOKEN", str(exc)) from exc
 

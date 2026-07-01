@@ -1,0 +1,41 @@
+{
+  "common": {},
+  "afterMeeting": {
+    "title": "ミーティング",
+    "back": "戻る",
+    "tabSummary": "ミーティング要約",
+    "tabScript": "会話内容",
+    "waitMessage": "✦ 分析が完了すると自動的に表示されます",
+    "errorMessage": "要約を読み込めませんでした",
+    "retry": "再試行",
+    "oneLinerSection": "一行要約",
+    "decisionsSection": "決定事項",
+    "actionItemsSection": "アクションアイテム",
+    "followUpSection": "今後の予定",
+    "noDecisions": "決定事項はありません",
+    "noActionItems": "アクションアイテムはありません",
+    "noFollowUp": "今後の予定はありません",
+    "expand": "もっと見る",
+    "collapse": "折りたたむ",
+    "noTranscript": "会話内容がありません",
+    "loadMoreFailed": "読み込みに失敗しました",
+    "you": "（あなた）"
+  },
+  "joinLiveSession": {
+    "joinedMeeting": "{{title}}に参加しました。"
+  },
+  "guestLiveSession": {
+    "joinedMeeting": "{{title}}に参加しました。"
+  },
+  "hostLiveSession": {
+    "startFailedTitle": "ミーティングを開始できませんでした",
+    "startFailedBody": "少し待ってから再度お試しください。",
+    "connectionRejectedBody": "接続が拒否されました。再入室してください。",
+    "startPopupTitle": "同時通訳を開始",
+    "startPopupDescription": "AI通訳を開始しますか?",
+    "endPopupTitle": "ミーティング終了",
+    "endPopupDescription": "ミーティングを終了しますか?",
+    "leavePopupTitle": "ミーティングルームを退出",
+    "leavePopupDescription": "ミーティングルームを退出しますか?"
+  }
+}

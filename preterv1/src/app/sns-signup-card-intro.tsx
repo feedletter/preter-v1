@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SignupProgressBar } from '@/components/signup-progress-bar';
@@ -8,6 +9,7 @@ import { Brand, Spacing } from '@/constants/theme';
 
 export default function SnsSignupCardIntroScreen() {
   const router = useRouter();
+  const { t } = useTranslation();
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -16,7 +18,7 @@ export default function SnsSignupCardIntroScreen() {
         <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backButton}>
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
-        <Text style={styles.topBarTitle}>회원 정보</Text>
+        <Text style={styles.topBarTitle}>{t('snsSignupCardIntro.topBarTitle')}</Text>
       </View>
 
       <SignupProgressBar step={1} total={2} />
@@ -25,29 +27,29 @@ export default function SnsSignupCardIntroScreen() {
         <View style={styles.cardIllustration}>
           <View style={styles.cardBack} />
           <View style={styles.card}>
-            <Text style={styles.cardName}>김민준</Text>
-            <Text style={styles.cardMeta}>수출팀 팀장</Text>
-            <Text style={styles.cardMeta}>㈜ 한국무역</Text>
-            <Text style={styles.cardEmail}>kim@hankook.co.kr</Text>
+            <Text style={styles.cardName}>{t('signupCardIntro.sampleCardName')}</Text>
+            <Text style={styles.cardMeta}>{t('signupCardIntro.sampleCardPosition')}</Text>
+            <Text style={styles.cardMeta}>{t('signupCardIntro.sampleCardCompany')}</Text>
+            <Text style={styles.cardEmail}>{t('signupCardIntro.sampleCardEmail')}</Text>
           </View>
         </View>
 
-        <Text style={styles.title}>명함을 촬영해주세요</Text>
-        <Text style={styles.subtitle}>
-          명함을 스캔하면 회원 정보를{'\n'}자동으로 입력해드려요
-        </Text>
+        <Text style={styles.title}>{t('signupCardIntro.title')}</Text>
+        <Text style={styles.subtitle}>{t('signupCardIntro.subtitle')}</Text>
       </View>
 
       <View style={styles.buttonGroup}>
         <Pressable
           style={styles.primaryButton}
-          onPress={() => Alert.alert('준비 중', '명함 스캔 기능은 곧 제공될 예정이에요.')}>
-          <Text style={styles.primaryButtonLabel}>명함 스캔하기</Text>
+          onPress={() =>
+            Alert.alert(t('snsSignupCardIntro.comingSoonTitle'), t('snsSignupCardIntro.comingSoonBody'))
+          }>
+          <Text style={styles.primaryButtonLabel}>{t('signupCardIntro.scanButton')}</Text>
         </Pressable>
         <Pressable
           style={styles.secondaryButton}
           onPress={() => router.push('/sns-signup-form')}>
-          <Text style={styles.secondaryButtonLabel}>나중에 입력하기</Text>
+          <Text style={styles.secondaryButtonLabel}>{t('snsSignupCardIntro.enterLaterButton')}</Text>
         </Pressable>
       </View>
     </SafeAreaView>
