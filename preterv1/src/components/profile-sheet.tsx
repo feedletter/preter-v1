@@ -1,4 +1,6 @@
+import Constants from 'expo-constants';
 import { Image } from 'expo-image';
+import * as Updates from 'expo-updates';
 import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
@@ -32,6 +34,19 @@ const APP_LANGUAGE_OPTIONS = SUPPORTED_APP_LANGUAGES as ProfileLanguage[];
 
 const HELP_CENTER_URL = 'https://docs.preter.me';
 const SCREEN_WIDTH = Dimensions.get('window').width;
+
+// OTA(EAS Update) 반영 확인용 한 줄. updateId/createdAt는 OTA가 적용된 실행에서만 채워지고,
+// 새 OTA가 적용되면 값이 바뀐다 — createdAt(발행 시각)로 "최신 반영 여부"를 눈으로 확인한다.
+function otaStatusLine(): string {
+  if (!Updates.isEnabled) return 'OTA: dev';
+  if (Updates.isEmbeddedLaunch || !Updates.updateId) return 'OTA: 내장 번들 (미적용)';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const d = Updates.createdAt;
+  const when = d
+    ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    : '';
+  return `OTA: ${when} · ${Updates.updateId.slice(0, 8)}`;
+}
 // 오른쪽 가장자리부터 끌어와서 닫는 제스처가 이 거리(화면 너비의 1/3)를 넘으면
 // 손을 떼도 계속 닫히는 방향으로 완료시킨다 (그 이하면 원위치로 스냅백).
 const CLOSE_DRAG_THRESHOLD = SCREEN_WIDTH / 3;
@@ -269,7 +284,8 @@ export function ProfileSheet({
           <Pressable style={styles.logoutRow} onPress={handleLogout} accessibilityLabel={t('profileSheet.logout')}>
             <Text style={styles.logoutLabel}>{t('profileSheet.logout')}</Text>
           </Pressable>
-          <Text style={styles.versionText}>Preter v1.0.0</Text>
+          <Text style={styles.versionText}>Preter v{Constants.expoConfig?.version ?? '1.0.0'}</Text>
+          <Text style={styles.otaText}>{otaStatusLine()}</Text>
         </ScrollView>
       </Animated.View>
 
@@ -451,6 +467,12 @@ const styles = StyleSheet.create({
   },
   versionText: {
     fontSize: 12,
+    color: Brand.textDisabled,
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  otaText: {
+    fontSize: 11,
     color: Brand.textDisabled,
     textAlign: 'center',
     marginBottom: 24,
