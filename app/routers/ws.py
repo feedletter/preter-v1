@@ -160,9 +160,27 @@ async def room_session(websocket: WebSocket, room_id: str, token: str):
         asyncio.to_thread(_load_participant_row, room_id, user_id, is_guest),
     )
     if room_row is None or room_row["status"] == "ended":
+        # 거부 사유를 명시적으로 남긴다 — "방에 들어간 처리가 안 된다"는 증상은 대부분 여기서
+        # 조용히 close되는데 로그가 없어 원인(방 없음 vs 이미 종료됨)을 특정할 수 없었다.
+        logger.warning(
+            "WS 거부(방 상태): room_id=%s user_id=%s is_guest=%s room_row=%s status=%s",
+            room_id,
+            user_id,
+            is_guest,
+            "None" if room_row is None else "found",
+            None if room_row is None else room_row.get("status"),
+        )
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
     if participant_row is None or participant_row["is_kicked"]:
+        logger.warning(
+            "WS 거부(참가자): room_id=%s user_id=%s is_guest=%s participant_row=%s is_kicked=%s",
+            room_id,
+            user_id,
+            is_guest,
+            "None" if participant_row is None else "found",
+            None if participant_row is None else participant_row.get("is_kicked"),
+        )
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
