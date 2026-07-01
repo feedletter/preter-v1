@@ -16,6 +16,9 @@ export type LiveSessionEvent =
   | {
       type: 'ROOM_STATE_UPDATE';
       users: RoomUser[];
+      // 동시 발화 지원: 현재 말하고 있는 화자 집합(여럿일 수 있음).
+      activeSpeakerIds: string[];
+      // 구버전 호환용 단일 필드(첫 화자) — 신규 클라이언트는 activeSpeakerIds를 쓴다.
       activeSpeakerId: string | null;
       status: string;
       startedAt: string | null;
@@ -29,11 +32,13 @@ export type LiveSessionEvent =
       isFinal: boolean;
     }
   | { type: 'AUDIO_TRANSLATED'; speakerId: string; targetLanguage: string; data: string }
+  // 동일 언어 청자에게 통역 없이 그대로 보내는 원본 PCM(16kHz). 화자별 재생 큐로
+  // 라우팅할 수 있게 speakerId를 함께 싣는다.
+  | { type: 'AUDIO_BYPASS'; speakerId: string; data: string }
   | { type: 'TURN_COMPLETE'; speakerId: string }
   | { type: 'INTERRUPTED'; speakerId: string }
   | { type: 'ROOM_ENDED'; endedBy: string }
-  | { type: 'PARTICIPANT_KICKED' }
-  | { type: 'FLOOR_OCCUPIED'; activeSpeakerName: string };
+  | { type: 'PARTICIPANT_KICKED' };
 
 type Listener = (event: LiveSessionEvent) => void;
 type StatusListener = (status: 'connecting' | 'open' | 'closed') => void;
