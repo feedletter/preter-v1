@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as Updates from 'expo-updates';
 import * as WebBrowser from 'expo-web-browser';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -24,6 +25,20 @@ export default function ProfileInfoScreen() {
   const version = Constants.expoConfig?.version ?? '1.0.0';
   const buildNumber =
     Constants.expoConfig?.ios?.buildNumber ?? Constants.expoConfig?.android?.versionCode ?? '100';
+
+  // OTA(EAS Update) 반영 확인용 표기. updateId/createdAt는 OTA가 적용된 실행에서만 채워지고,
+  // 새 OTA가 적용되면 값이 바뀐다 — createdAt(발행 시각)로 "최신 반영 여부"를 눈으로 확인한다.
+  // dev/내장 번들(OTA 미적용)은 그 상태를 그대로 보여준다.
+  const otaLine = (() => {
+    if (!Updates.isEnabled) return 'OTA: dev';
+    if (Updates.isEmbeddedLaunch || !Updates.updateId) return 'OTA: 내장 번들 (미적용)';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const d = Updates.createdAt;
+    const when = d
+      ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+      : '';
+    return `OTA: ${when} · ${Updates.updateId.slice(0, 8)}`;
+  })();
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -65,6 +80,7 @@ export default function ProfileInfoScreen() {
             v{version} (Build {buildNumber})
           </Text>
         </View>
+        <Text style={styles.otaLine}>{otaLine}</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -142,5 +158,11 @@ const styles = StyleSheet.create({
   versionValue: {
     fontSize: 14,
     color: Brand.textDisabled,
+  },
+  otaLine: {
+    fontSize: 12,
+    color: Brand.textDisabled,
+    textAlign: 'center',
+    marginTop: 10,
   },
 });
