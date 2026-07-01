@@ -1,27 +1,33 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import * as SecureStore from 'expo-secure-store';
-import {
-  AudioContext,
-  AudioManager,
-  AudioRecorder,
-  type AudioBufferQueueSourceNode,
-} from 'react-native-audio-api';
+import { AudioContext, AudioManager, AudioRecorder } from 'react-native-audio-api';
 
 import { logCrashBreadcrumb } from '@/lib/firebase';
 import type { LiveSessionEvent } from '@/lib/live-session';
+
+// 재생 스케줄링에 쓰는 노드/버퍼 타입을 AudioContext 메서드 반환형에서 끌어온다
+// (라이브러리 export 이름에 의존하지 않기 위함).
+type PlaybackSourceNode = ReturnType<AudioContext['createBufferSource']>;
+type PlaybackBuffer = ReturnType<AudioContext['createBuffer']>;
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
 const WS_URL = API_URL.replace(/^http/, 'ws');
 const TARGET_SR: number = 16000; // Gemini Live 입력 규격
 // Gemini Live가 돌려주는 통역 오디오는 24kHz 고정 규격(공식 스펙) — 재생용 AudioContext를
 // 이 값으로 고정한다. new AudioContext()를 옵션 없이 만들면 기기 하드웨어 네이티브
-// sample rate(44100/48000 등 기기마다 다름)로 잡히는데, react-native-audio-api의
-// AudioBufferQueueSourceNode가 버퍼 자체의 sampleRate와 context의 실제 출력 sampleRate가
+// sample rate(44100/48000 등 기기마다 다름)로 잡히는데, react-native-audio-api의 재생
+// 노드가 버퍼 자체의 sampleRate와 context의 실제 출력 sampleRate가
 // 다를 때 자동 리샘플링을 보장하지 않아 "다른 기기에서는 정상, 어떤 기기에서는 빠르거나
 // 느리게 들리는" 간헐적 버그의 원인이 된다(2026-06-28 발견). context를 고정값으로
 // 만들어 기기 하드웨어 native rate에 대한 의존을 완전히 없앤다.
 const PLAYBACK_SR = 24000;
 const MAX_RECONNECT_DELAY_MS = 10000;
+
+// 재생 지터 버퍼(쿠션). Gemini 통역 오디오는 WS로 도착 간격이 들쭉날쭉한데, 각 버퍼를
+// 오디오 클럭 위에 직접 예약(schedule)하면서 항상 이 시간만큼 앞세워 재생을 시작하면,
+// 청크가 이 시간 이내로 늦게 와도 재생이 끊기지 않는다(underrun 흡수). 크면 안정적이지만
+// 지연↑, 작으면 지연↓지만 끊김↑ — 150~250ms에서 튜닝. 통역 전체 지연(1~3초) 대비 미미.
+const PLAYBACK_PREBUFFER_S = 0.2;
 
 // 클라이언트 RMS(음량) 게이팅 임계값. 같은 좁은 공간에서 여러 명이 블루투스 이어폰을
 // 끼고 말할 때, 옆 사람 목소리가 내 마이크에 물리적으로 새어 들어와(누출) 내 발화
@@ -114,10 +120,13 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const audioContextRef = useRef<AudioContext | null>(null);
-    // 동시 발화 지원: 화자(speakerId)별로 별도의 재생 큐를 둔다. 단일 큐에 여러 화자의
-    // 버퍼를 섞으면 큐 노드가 순차 재생만 해서 동시 발화가 겹쳐 들리지 않고 줄줄이
-    // 이어붙는다 — 화자별 큐를 따로 destination에 연결해야 실제 대화처럼 겹쳐 재생된다.
-    const queuesRef = useRef<Map<string, AudioBufferQueueSourceNode>>(new Map());
+    // 동시 발화 지원 + gapless 재생: 화자(speakerId)별로 재생 스케줄 상태를 따로 둔다.
+    // playHeadRef: 그 화자의 "다음 버퍼를 시작할 오디오 클럭 시각(초)". 버퍼를 이 시각에
+    // 예약하고 duration만큼 전진시켜 틈 없이 이어붙인다(화자별로 독립이라 동시 발화가
+    // 겹쳐 재생된다). scheduledNodesRef: 예약/재생 중인 소스 노드 집합 — 바지-인(INTERRUPTED)
+    // 정지와 언마운트 정리, 재생 완료 후 disconnect(누수 방지)에 쓴다.
+    const playHeadRef = useRef<Map<string, number>>(new Map());
+    const scheduledNodesRef = useRef<Map<string, Set<PlaybackSourceNode>>>(new Map());
     const recorderRef = useRef<AudioRecorder | null>(null);
 
     // RMS 게이팅 hangover 카운터: 발화가 감지된 뒤 말끝 감쇠 구간을 살리기 위해 남은
@@ -147,32 +156,72 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
       }, delay);
     }
 
-    // 화자별 재생 큐를 lazy하게 만든다 — 처음 그 화자의 오디오가 도착할 때 생성해
-    // destination에 연결한다. context가 아직 준비 안 됐으면 null.
-    function getQueueForSpeaker(speakerId: string): AudioBufferQueueSourceNode | null {
+    // 한 버퍼를 오디오 클럭 위 정확한 시각에 예약해 재생한다(gapless 스트리밍).
+    // 큐 노드에 위임하지 않고 화자별 playHead를 직접 관리하는 이유: 큐 노드는 청크 도착
+    // 지연으로 비면(drain) 재생이 끊기거나(chopping) 재개가 매끄럽지 않았다. 각 버퍼를
+    // 직전 버퍼 끝(playHead)에 딱 붙여 예약하되, 뒤처졌으면(underrun) 쿠션(PLAYBACK_PREBUFFER_S)
+    // 만큼 다시 앞세워 자가복구한다.
+    function scheduleBuffer(speakerId: string, buffer: PlaybackBuffer) {
       const context = audioContextRef.current;
-      if (!context) return null;
-      let queue = queuesRef.current.get(speakerId);
-      if (!queue) {
-        queue = context.createBufferQueueSource();
-        queue.connect(context.destination);
-        // start()의 offset 기본값(-1) 라이브러리 버그 회피 — 명시적으로 0을 넘긴다.
-        queue.start(0, 0);
-        queuesRef.current.set(speakerId, queue);
+      if (!context) return;
+      const src = context.createBufferSource();
+      src.buffer = buffer;
+      src.connect(context.destination);
+
+      const duration = (buffer as { duration?: number }).duration ?? buffer.length / PLAYBACK_SR;
+      const prev = playHeadRef.current.get(speakerId) ?? 0;
+      const when = Math.max(prev, context.currentTime + PLAYBACK_PREBUFFER_S);
+      src.start(when);
+      playHeadRef.current.set(speakerId, when + duration);
+
+      // 바지-인 정지 + 재생 완료 후 정리(누수 방지)를 위해 예약된 노드를 추적한다. Gemini가
+      // 초당 여러 청크를 보내 노드가 계속 생기므로, 재생이 끝난 노드는 반드시 disconnect한다.
+      let nodes = scheduledNodesRef.current.get(speakerId);
+      if (!nodes) {
+        nodes = new Set();
+        scheduledNodesRef.current.set(speakerId, nodes);
       }
-      return queue;
+      nodes.add(src);
+      // 재생이 끝날 시각(+여유 300ms)에 노드를 떼어낸다. one-shot 소스라 재생 후엔 소리를
+      // 안 내지만, disconnect를 안 하면 네이티브 노드가 쌓여 장시간 미팅에서 누수가 된다.
+      const cleanupDelayMs = (when + duration - context.currentTime) * 1000 + 300;
+      setTimeout(() => {
+        nodes!.delete(src);
+        try {
+          src.disconnect();
+        } catch {
+          // 이미 정리된 노드는 무시.
+        }
+      }, cleanupDelayMs);
     }
 
-    // 통역 오디오(AUDIO_TRANSLATED, 24kHz)와 bypass 원본(AUDIO_BYPASS, 16kHz)은 둘 다
-    // raw PCM(16-bit little-endian mono)이라 동일 경로로 동기 변환해 즉시 큐에 넣는다.
-    // 과거 통역 오디오는 context.decodePCMInBase64(비동기)로 디코딩 후 .then()에서 enqueue
-    // 했는데, 청크마다 Promise resolve 타이밍이 들쭉날쭉하고 순서 보장도 안 돼서 재생 큐가
-    // 청크 사이에서 순간적으로 비면서(underrun) 단어 단위로 끊겨 들리는(chopping) 문제가
-    // 있었다. 도착 즉시 순서대로 동기 enqueue하면 큐가 마르지 않아 매끄럽게 이어진다.
+    // 바지-인(INTERRUPTED): 해당 화자의 예약된 미래 재생을 즉시 멈추고 playHead를 리셋해,
+    // 다음 발화가 쿠션부터 새로 시작되게 한다. 다른 화자의 동시 재생은 건드리지 않는다.
+    function stopSpeaker(speakerId: string) {
+      const nodes = scheduledNodesRef.current.get(speakerId);
+      if (nodes) {
+        for (const node of nodes) {
+          try {
+            node.stop();
+          } catch {
+            // 이미 끝났거나 멈출 수 없는 노드는 무시.
+          }
+          try {
+            node.disconnect();
+          } catch {
+            // no-op
+          }
+        }
+        nodes.clear();
+      }
+      playHeadRef.current.delete(speakerId);
+    }
+
+    // 통역 오디오(AUDIO_TRANSLATED, 24kHz)와 bypass 원본(AUDIO_BYPASS, 16kHz)은 둘 다 raw
+    // PCM(16-bit little-endian mono)이라 동일 경로로 동기 변환한 뒤 scheduleBuffer로 예약한다.
     function enqueuePcmBase64(speakerId: string, base64: string, sourceSR: number) {
       const context = audioContextRef.current;
-      const queue = getQueueForSpeaker(speakerId);
-      if (!context || !queue) return;
+      if (!context) return;
       const binary = globalThis.atob(base64);
       const byteLen = binary.length;
       if (byteLen < 2) return;
@@ -183,13 +232,12 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
       let float32: Float32Array = new Float32Array(int16.length);
       for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768;
       // 재생 context는 PLAYBACK_SR(24kHz) 고정이라, 소스가 그와 다르면(bypass 16kHz) 미리
-      // 리샘플링해 버퍼 선언 rate와 실제 재생 rate를 일치시킨다(섞일 때 노드가 buffer.sampleRate를
-      // 무시하고 context rate로만 재생하는 문제 회피). 통역 오디오는 이미 24kHz라 통과.
+      // 리샘플링해 버퍼 선언 rate와 실제 재생 rate를 일치시킨다. 통역 오디오는 이미 24kHz라 통과.
       if (sourceSR !== PLAYBACK_SR) float32 = resample(float32, sourceSR, PLAYBACK_SR);
       if (float32.length === 0) return;
       const buffer = context.createBuffer(1, float32.length, PLAYBACK_SR);
       buffer.copyToChannel(float32, 0);
-      queue.enqueueBuffer(buffer);
+      scheduleBuffer(speakerId, buffer);
     }
 
     function handleSocketMessage(data: unknown) {
@@ -207,8 +255,8 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
       } else if (msg.type === 'AUDIO_BYPASS' && typeof msg.data === 'string') {
         enqueuePcmBase64(msg.speakerId as string, msg.data, TARGET_SR); // 동일 언어 원본 16kHz
       } else if (msg.type === 'INTERRUPTED') {
-        // 해당 화자 큐만 비운다 — 다른 화자의 동시 발화 재생은 끊지 않는다.
-        queuesRef.current.get(msg.speakerId as string)?.clearBuffers();
+        // 해당 화자의 예약 재생만 멈춘다 — 다른 화자의 동시 발화 재생은 끊지 않는다.
+        stopSpeaker(msg.speakerId as string);
       }
       // 모든 JSON 이벤트(자막/상태/종료 등)는 RN 네이티브 UI로 그대로 전달.
       onEventRef.current(msg as LiveSessionEvent);
@@ -291,7 +339,8 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
       let cancelled = false;
       let context: AudioContext | null = null;
       let recorder: AudioRecorder | null = null;
-      const queues = queuesRef.current;
+      const scheduledNodes = scheduledNodesRef.current;
+      const playHeads = playHeadRef.current;
 
       async function setup() {
         logCrashBreadcrumb(`live-audio-bridge: mount roomId=${roomId}`);
@@ -338,8 +387,8 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
         context = new AudioContext({ sampleRate: PLAYBACK_SR });
         audioContextRef.current = context;
         logCrashBreadcrumb('live-audio-bridge: AudioContext created');
-        // 재생 큐는 더 이상 단일 노드가 아니라 화자별로 lazy 생성한다(동시 발화 겹침
-        // 재생). 첫 오디오가 도착할 때 getQueueForSpeaker가 만든다.
+        // 재생은 화자별 playHead에 버퍼를 오디오 클럭으로 직접 예약한다(scheduleBuffer) —
+        // 첫 오디오가 도착할 때 그 화자의 재생 상태가 lazy로 만들어진다(동시 발화 겹침 재생).
 
         recorder = new AudioRecorder();
         recorderRef.current = recorder;
@@ -404,14 +453,24 @@ export const LiveAudioBridge = forwardRef<LiveAudioBridgeHandle, Props>(
         recorder?.clearOnError();
         wsRef.current?.close();
         wsRef.current = null;
-        for (const q of queues.values()) {
-          try {
-            q.stop();
-          } catch {
-            // 이미 정리된 큐는 무시.
+        // 예약/재생 중인 모든 소스 노드를 정지·해제한다(화자 전체).
+        for (const nodes of scheduledNodes.values()) {
+          for (const node of nodes) {
+            try {
+              node.stop();
+            } catch {
+              // 이미 끝난 노드는 무시.
+            }
+            try {
+              node.disconnect();
+            } catch {
+              // no-op
+            }
           }
+          nodes.clear();
         }
-        queues.clear();
+        scheduledNodes.clear();
+        playHeads.clear();
         context?.close().catch(() => {});
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
